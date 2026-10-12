@@ -11,10 +11,17 @@
 import type Database from 'better-sqlite3';
 
 import type { AppDatabase } from './client.js';
-import { categories } from './schema.js';
+import { categories, items } from './schema.js';
 import { createItem } from './repository.js';
 import { initSchema } from './init.js';
 import { MS_PER_DAY } from '../domain/expiry.js';
+
+/** 示例分类定义，供幂等写入复用 */
+const SEED_CATEGORIES = [
+  { name: '乳制品', icon: 'milk', color: '#A7C7E7' },
+  { name: '蔬果', icon: 'carrot', color: '#8FBF8F' },
+  { name: '日用品', icon: 'box', color: '#D9B38C' },
+] as const;
 
 /** 计算从给定时刻起、下一个周五的毫秒时间戳（含“今天就是周五”则取 7 天后） */
 export function nextFriday(now: number = Date.now()): number {
@@ -37,23 +44,23 @@ export function seedData(
   db: AppDatabase,
   now: number = Date.now(),
 ): { categoryCount: number; itemCount: number } {
-  // ── 分类 ──
-  const categoryRows = db
-    .insert(categories)
-    .values([
-      { name: '乳制品', icon: 'milk', color: '#A7C7E7' },
-      { name: '蔬果', icon: 'carrot', color: '#8FBF8F' },
-      { name: '日用品', icon: 'box', color: '#D9B38C' },
-    ])
-    .returning()
-    .all();
+  // ── 分类（幂等：已存在的分类跳过，避免重复运行时撞 UNIQUE 约束）──
+  db.insert(categories)
+    .values([...SEED_CATEGORIES])
+    .onConflictDoNothing({ target: categories.name })
+    .run();
 
+  // 统一按名字查出分类 id（无论首次插入还是已存在）
+  const categoryRows = db.select().from(categories).all();
   const byName = new Map(categoryRows.map((c) => [c.name, c.id]));
   const dairyId = byName.get('乳制品');
   const produceId = byName.get('蔬果');
   const dailyId = byName.get('日用品');
 
   // ── 食材/物品 ──
+  // 幂等：先清空 item 表，确保重复运行 seed 时结果稳定、不累积重复示例物品
+  db.delete(items).run();
+
   // 两盒牛奶，保质期到下周五（即将到期场景之一）
   createItem(db, {
     name: '牛奶',
@@ -112,7 +119,7 @@ export function seedData(
     source: 'manual',
   });
 
-  return { categoryCount: categoryRows.length, itemCount: 5 };
+  return { categoryCount: SEED_CATEGORIES.length, itemCount: 5 };
 }
 
 /** 直接运行时的入口：对默认连接建表并写入示例数据 */
@@ -124,7 +131,7 @@ async function main(): Promise<void> {
   initSchema(sqlite);
   const { categoryCount, itemCount } = seedData(db);
   console.log(
-    `[db:seed] 已插入 ${categoryCount} 个分类、${itemCount} 条食材。`,
+    `[db:seed] 已写入示例数据：${categoryCount} 个分类、${itemCount} 条食材（可重复运行）。`,
   );
 }
 
