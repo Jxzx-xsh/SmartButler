@@ -9,7 +9,13 @@
 import { and, asc, eq, isNotNull, lte, type SQL } from 'drizzle-orm';
 
 import type { AppDatabase } from './client.js';
-import { items, type Item, type NewItem } from './schema.js';
+import {
+  categories,
+  items,
+  type Category,
+  type Item,
+  type NewItem,
+} from './schema.js';
 import { computeExpiryDate, MS_PER_DAY } from '../domain/expiry.js';
 
 /** createItem 的输入类型：省略由系统生成/派生的字段 */
@@ -22,6 +28,8 @@ export type CreateItemInput = Omit<
 export interface ListItemsFilter {
   categoryId?: number;
   location?: string;
+  /** 是否仅返回已确认 / 未确认的物品 */
+  confirmed?: boolean;
 }
 
 /** updateItem 的补丁类型：允许更新除主键/时间戳外的字段 */
@@ -75,6 +83,9 @@ export function listItems(
   if (filter.location !== undefined) {
     conditions.push(eq(items.location, filter.location));
   }
+  if (filter.confirmed !== undefined) {
+    conditions.push(eq(items.confirmed, filter.confirmed));
+  }
 
   const base = db.select().from(items);
   if (conditions.length === 0) {
@@ -120,4 +131,42 @@ export function listExpiringItems(
     .where(and(isNotNull(items.expiryDate), lte(items.expiryDate, threshold)))
     .orderBy(asc(items.expiryDate))
     .all();
+}
+
+// ─── 分类仓储 ────────────────────────────────────────────────
+
+/** createCategory 的输入类型：仅名称必填，图标/颜色可选 */
+export interface CreateCategoryInput {
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+}
+
+/** 列出所有分类（按 id 升序，保持稳定顺序） */
+export function listCategories(db: AppDatabase): Category[] {
+  return db.select().from(categories).orderBy(asc(categories.id)).all();
+}
+
+/**
+ * 新建分类，返回插入后的记录。
+ * name 命中唯一约束时由底层 better-sqlite3 抛错（供路由层转 409）。
+ */
+export function createCategory(
+  db: AppDatabase,
+  input: CreateCategoryInput,
+): Category {
+  const rows = db
+    .insert(categories)
+    .values({
+      name: input.name,
+      icon: input.icon ?? null,
+      color: input.color ?? null,
+    })
+    .returning()
+    .all();
+  const created = rows[0];
+  if (created === undefined) {
+    throw new Error('createCategory 未返回插入结果');
+  }
+  return created;
 }
