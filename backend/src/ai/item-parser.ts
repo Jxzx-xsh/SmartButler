@@ -106,8 +106,8 @@ function buildDateContext(nowMs: number): { date: string; weekday: string } {
 /**
  * 构造中文系统提示，注入当前日期上下文。
  *
- * 要求模型只输出严格 JSON 对象 { items: [...] }（配合 chatTextJson 的
- * json_object 响应格式），并把中文相对/模糊日期换算为绝对到期日 ISO 字符串。
+ * 要求模型只输出严格 JSON 对象 { items: [...] }（chatTextJson 用 text 响应格式
+ * 并对输出做容错 JSON 解析），并把中文相对/模糊日期换算为绝对到期日 ISO 字符串。
  */
 function buildSystemPrompt(ctx: { date: string; weekday: string }): string {
   return [

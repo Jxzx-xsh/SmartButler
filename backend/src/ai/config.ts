@@ -36,8 +36,10 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
   const timeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : DEFAULT_TIMEOUT_MS;
 
   return {
-    // 端点基址：默认指向局域网内的 LM Studio
-    baseUrl: env.LMSTUDIO_BASE_URL ?? 'http://192.168.208.114:1234/v1',
+    // 端点基址：默认指向本机 LM Studio（后端与 LM Studio 同在一台 Mac mini，
+    // 用 localhost 不受局域网 IP 变化影响；若 LM Studio 在其他主机，用
+    // 环境变量 LMSTUDIO_BASE_URL 覆盖为 http://<host>:1234/v1）
+    baseUrl: env.LMSTUDIO_BASE_URL ?? 'http://localhost:1234/v1',
     // API Key：LM Studio 本地不校验，占位字符串即可
     apiKey: env.LMSTUDIO_API_KEY ?? 'lm-studio',
     // 文本模型：默认 qwen3-4b

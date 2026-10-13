@@ -129,7 +129,7 @@ describe('chatText', () => {
 });
 
 describe('chatTextJson', () => {
-  it('解析成功返回对象，并强制 json_object', async () => {
+  it('解析成功返回对象，并用 text 响应格式（兼容 LM Studio，不用 json_object）', async () => {
     const chatCreate = vi.fn().mockResolvedValue({
       choices: [{ message: { content: '{"name":"牛奶","qty":2}' } }],
     });
@@ -138,9 +138,32 @@ describe('chatTextJson', () => {
 
     const out = await client.chatTextJson<{ name: string; qty: number }>({ user: 'x' });
     expect(out).toEqual({ name: '牛奶', qty: 2 });
+    // LM Studio 新版 response_format 只接受 'json_schema'/'text'，chatTextJson 用 text
     expect(chatCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ response_format: { type: 'json_object' } }),
+      expect.objectContaining({ response_format: { type: 'text' } }),
     );
+  });
+
+  it('容错解析：剥离 markdown 代码块包裹后仍能解析', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '```json\n{"name":"酸奶","qty":3}\n```' } }],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatTextJson<{ name: string; qty: number }>({ user: 'x' });
+    expect(out).toEqual({ name: '酸奶', qty: 3 });
+  });
+
+  it('容错解析：剥离前后缀文字后截取 JSON', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '好的，结果是：{"name":"鸡蛋","qty":10} 以上。' } }],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatTextJson<{ name: string; qty: number }>({ user: 'x' });
+    expect(out).toEqual({ name: '鸡蛋', qty: 10 });
   });
 
   it('非法 JSON 抛 bad_response', async () => {

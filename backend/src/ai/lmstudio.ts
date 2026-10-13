@@ -34,8 +34,9 @@ export interface ChatTextOptions {
   user?: string;
   /** 采样温度 */
   temperature?: number;
-  /** 响应格式（透传为 response_format） */
-  responseFormat?: { type: 'json_object' };
+  /** 响应格式（透传为 response_format）。LM Studio 支持 'text' / 'json_schema'，
+   * 保留 'json_object' 以兼容标准 OpenAI 端点 */
+  responseFormat?: { type: 'json_object' | 'json_schema' | 'text' };
 }
 
 /** chatVision 入参。 */
@@ -120,7 +121,7 @@ interface ChatCompletionCreateBody {
   model: string;
   messages: Array<{ role: ChatRole; content: string | VisionContentPart[] }>;
   temperature?: number;
-  response_format?: { type: 'json_object' };
+  response_format?: { type: 'json_object' | 'json_schema' | 'text' };
 }
 
 /** 视觉消息 content 数组元素。 */
@@ -283,13 +284,41 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
   }
 
   async function chatTextJson<T = unknown>(opts: ChatTextOptions): Promise<T> {
-    // 强制 json_object 响应格式
-    const text = await chatText({ ...opts, responseFormat: { type: 'json_object' } });
+    // 用 text 响应格式（而非 json_object）：LM Studio 新版 response_format 只接受
+    // 'json_schema' 或 'text'，不支持 OpenAI 的 'json_object'。为兼容各版本，这里
+    // 用 text 格式，依赖调用方在提示词里约束模型"只输出 JSON"，再在本函数做容错解析。
+    const text = await chatText({ ...opts, responseFormat: { type: 'text' } });
     try {
-      return JSON.parse(text) as T;
+      return JSON.parse(extractJson(text)) as T;
     } catch (err) {
       throw new LmStudioError('LM Studio 返回的 JSON 解析失败', 'bad_response', err);
     }
+  }
+
+  /**
+   * 从模型文本输出中提取 JSON 字符串。
+   * 容错处理：剥离可能的 markdown 代码块包裹（```json ... ```），
+   * 并截取首个 { 或 [ 到对应末尾 } 或 ] 之间的内容，兼容模型偶尔附带的前后缀文字。
+   */
+  function extractJson(text: string): string {
+    let s = text.trim();
+    // 剥离 markdown 代码块围栏
+    s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    // 截取首个 JSON 结构（对象或数组）
+    const firstObj = s.indexOf('{');
+    const firstArr = s.indexOf('[');
+    const starts = [firstObj, firstArr].filter((i) => i >= 0);
+    if (starts.length === 0) {
+      return s;
+    }
+    const start = Math.min(...starts);
+    const lastObj = s.lastIndexOf('}');
+    const lastArr = s.lastIndexOf(']');
+    const end = Math.max(lastObj, lastArr);
+    if (end > start) {
+      return s.slice(start, end + 1);
+    }
+    return s;
   }
 
   async function chatVision(opts: ChatVisionOptions): Promise<string> {
