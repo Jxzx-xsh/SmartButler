@@ -8,8 +8,9 @@
  */
 
 import { buildApp } from './app.js';
-import { sqlite } from './db/client.js';
+import { db, sqlite } from './db/client.js';
 import { initSchema } from './db/init.js';
+import { createAiQueue } from './ai/queue.js';
 
 /** 启动服务器 */
 async function start(): Promise<void> {
@@ -17,6 +18,14 @@ async function start(): Promise<void> {
   initSchema(sqlite);
 
   const app = buildApp();
+
+  // 构建并启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
+  const aiQueue = createAiQueue({ db });
+  aiQueue.start();
+  app.addHook('onClose', async () => {
+    aiQueue.stop();
+  });
+
   const port = Number(process.env.SMARTBUTLER_PORT ?? 3000);
   const host = '0.0.0.0';
 

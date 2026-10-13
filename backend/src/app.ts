@@ -22,11 +22,15 @@ import { ZodError } from 'zod';
 import { db as defaultDb, type AppDatabase } from './db/client.js';
 import { itemsRoutes } from './routes/items.js';
 import { categoriesRoutes } from './routes/categories.js';
+import { aiRoutes } from './routes/ai.js';
+import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 
 /** buildApp 选项 */
 export interface BuildAppOptions {
   /** 注入的数据库实例，缺省使用 client.ts 的默认 db */
   db?: AppDatabase;
+  /** 注入的 LM Studio 客户端，缺省调用 createLmStudioClient() */
+  aiClient?: LmStudioClient;
 }
 
 /** 把 zod 的 issues 概要成一句可读信息 */
@@ -51,6 +55,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   // 注入 db 注册业务路由
   app.register(itemsRoutes, { db });
   app.register(categoriesRoutes, { db });
+  // 注入 LM Studio 客户端注册 AI 路由
+  app.register(aiRoutes, { client: options.aiClient ?? createLmStudioClient() });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(
