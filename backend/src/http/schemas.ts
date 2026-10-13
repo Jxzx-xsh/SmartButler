@@ -88,3 +88,12 @@ export const createCategoryBodySchema = z.object({
 
 /** 解析后的创建分类请求体类型 */
 export type CreateCategoryBody = z.infer<typeof createCategoryBodySchema>;
+
+/** POST /api/voice/ingest-text 请求体校验：文本转写内容，必填非空 */
+export const ingestTextBodySchema = z.object({
+  /** 待解析的转写文本：去除首尾空白后不能为空 */
+  text: z.string().trim().min(1, 'text 不能为空'),
+});
+
+/** 解析后的文本入库请求体类型 */
+export type IngestTextBody = z.infer<typeof ingestTextBodySchema>;

@@ -1,0 +1,176 @@
+/**
+ * 语音入库路由（Fastify 插件）。
+ *
+ * 打通「语音/文本 → 结构化解析 → 入库」渠道，提供两个端点：
+ * - POST /api/voice/ingest-text：直接接收文本（已转写或手动输入）→ 解析 → 入库。
+ *   让解析+入库能脱离 whisper STT 独立真实联调与演示。
+ * - POST /api/voice/ingest：接收上传音频（multipart）→ 规范化（ffmpeg）→ 转写（whisper）
+ *   → 解析 → 入库，走完整语音链路。
+ *
+ * 依赖通过 opts 注入：db（数据库）、client（LM Studio 客户端）、queue（可选 AI 队列）。
+ * 内部用 createItemParser 构造解析器；解析出的 category 为分类名字符串，需经
+ * listCategories 映射到已有分类 id（匹配不到则置空，不自动建分类）。
+ *
+ * 错误体统一为 { error: { message, code } }，与现有路由风格一致。
+ */
+
+import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+
+import type { AppDatabase } from '../db/client.js';
+import type { LmStudioClient } from '../ai/lmstudio.js';
+import type { AiQueue } from '../ai/queue.js';
+import { LmStudioError } from '../ai/errors.js';
+import { createItemParser, type ParsedItem } from '../ai/item-parser.js';
+import { normalizeAudio } from '../ai/audio.js';
+import { createItem, listCategories, type CreateItemInput } from '../db/repository.js';
+import type { Item } from '../db/schema.js';
+import { ingestTextBodySchema } from '../http/schemas.js';
+
+/** 路由插件 opts：注入数据库、LM Studio 客户端与可选 AI 队列。 */
+export interface VoiceRoutesOptions extends FastifyPluginOptions {
+  /** 数据库实例 */
+  db: AppDatabase;
+  /** LM Studio 客户端 */
+  client: LmStudioClient;
+  /** 可选 AI 任务队列：提供时解析任务经 enqueueImmediate 串行提交 */
+  queue?: AiQueue;
+}
+
+/** 单个 ffmpeg 可接受音频的最大体积：25MB（与 app.ts 注册的上限保持一致语义）。 */
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
+/**
+ * 把分类名归一化为用于匹配的 key：去首尾空白 + 转小写。
+ * 用于把模型返回的分类名宽松匹配到已有分类（大小写不敏感）。
+ */
+function categoryKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** 注册语音入库路由。 */
+export async function voiceRoutes(
+  app: FastifyInstance,
+  opts: VoiceRoutesOptions,
+): Promise<void> {
+  const { db, client, queue } = opts;
+  // 构造物品解析器：queue 存在时解析任务走队列即时串行提交
+  const parser = createItemParser(queue ? { client, queue } : { client });
+
+  /**
+   * 把解析出的物品数组入库，返回入库记录数组。
+   *
+   * - 取 listCategories(db) 建「分类名 key → id」映射（大小写不敏感、去空白）；
+   *   模型返回的 category 命中则带上 categoryId，匹配不到则不设（置空，不建新分类）。
+   * - source 固定为 'voice'，confirmed 为 true（语音录入默认已确认）。
+   * - 透传 quantity/unit/location/purchaseDate/shelfLifeDays/expiryDate；
+   *   createItem 在未显式给 expiryDate 时会按 purchaseDate+shelfLifeDays 自动算到期。
+   */
+  function persistParsedItems(parsed: ParsedItem[]): Item[] {
+    // 建分类名 → id 映射（宽松匹配）
+    const categoryIdByKey = new Map<string, number>();
+    for (const cat of listCategories(db)) {
+      categoryIdByKey.set(categoryKey(cat.name), cat.id);
+    }
+
+    const created: Item[] = [];
+    for (const p of parsed) {
+      const input: CreateItemInput = {
+        name: p.name,
+        source: 'voice',
+        confirmed: true,
+      };
+      if (p.quantity !== null && p.quantity !== undefined) {
+        input.quantity = p.quantity;
+      }
+      if (p.unit !== null && p.unit !== undefined) {
+        input.unit = p.unit;
+      }
+      if (p.location !== null && p.location !== undefined) {
+        input.location = p.location;
+      }
+      if (p.purchaseDate !== null && p.purchaseDate !== undefined) {
+        input.purchaseDate = p.purchaseDate;
+      }
+      if (p.shelfLifeDays !== null && p.shelfLifeDays !== undefined) {
+        input.shelfLifeDays = p.shelfLifeDays;
+      }
+      if (p.expiryDate !== null && p.expiryDate !== undefined) {
+        input.expiryDate = p.expiryDate;
+      }
+      // 分类名映射到已有分类 id；匹配不到则不设 categoryId（置空）
+      if (p.category !== null && p.category !== undefined) {
+        const id = categoryIdByKey.get(categoryKey(p.category));
+        if (id !== undefined) {
+          input.categoryId = id;
+        }
+      }
+
+      created.push(createItem(db, input));
+    }
+    return created;
+  }
+
+  // POST /api/voice/ingest-text — 文本直接解析入库（可脱离 whisper 独立联调）
+  app.post('/api/voice/ingest-text', async (request, reply) => {
+    // body 校验失败抛 ZodError，由 app 统一错误处理转 400
+    const { text } = ingestTextBodySchema.parse(request.body);
+    const parsed = await parser.parse(text);
+    const items = persistParsedItems(parsed);
+    return reply.send({ transcript: text, items });
+  });
+
+  // POST /api/voice/ingest — 上传音频 → 规范化 → 转写 → 解析 → 入库
+  app.post('/api/voice/ingest', async (request, reply) => {
+    // 取上传的音频文件（@fastify/multipart）
+    const uploaded = await request.file({ limits: { fileSize: MAX_AUDIO_BYTES } });
+    if (uploaded === undefined) {
+      return reply.code(400).send({
+        error: { message: '缺少上传的音频文件', code: 'NO_AUDIO' },
+      });
+    }
+
+    const audio = await uploaded.toBuffer();
+
+    // 规范化音频（ffmpeg）：ffmpeg 不可用时抛错 → 503 FFMPEG_UNAVAILABLE
+    let wavBuffer: Buffer;
+    try {
+      wavBuffer = await normalizeAudio(audio);
+    } catch (err) {
+      return reply.code(503).send({
+        error: {
+          message: err instanceof Error ? err.message : '音频规范化失败',
+          code: 'FFMPEG_UNAVAILABLE',
+        },
+      });
+    }
+
+    // 语音转写（whisper）：连接/超时类错误 → 503 STT_UNAVAILABLE；结构异常 → 502
+    let transcript: string;
+    try {
+      transcript = await client.transcribe({
+        audio: wavBuffer,
+        filename: 'audio.wav',
+        mimeType: 'audio/wav',
+      });
+    } catch (err) {
+      if (err instanceof LmStudioError) {
+        if (err.kind === 'connection' || err.kind === 'timeout') {
+          return reply.code(503).send({
+            error: { message: '语音转写服务不可用', code: 'STT_UNAVAILABLE' },
+          });
+        }
+        if (err.kind === 'bad_response') {
+          return reply.code(502).send({
+            error: { message: '语音转写返回异常', code: 'STT_BAD_RESPONSE' },
+          });
+        }
+      }
+      // 其余交给 app 统一错误处理（500）
+      throw err;
+    }
+
+    const parsed = await parser.parse(transcript);
+    const items = persistParsedItems(parsed);
+    return reply.send({ transcript, items });
+  });
+}

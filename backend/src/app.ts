@@ -17,12 +17,14 @@ import Fastify, {
   type FastifyRequest,
 } from 'fastify';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import { ZodError } from 'zod';
 
 import { db as defaultDb, type AppDatabase } from './db/client.js';
 import { itemsRoutes } from './routes/items.js';
 import { categoriesRoutes } from './routes/categories.js';
 import { aiRoutes } from './routes/ai.js';
+import { voiceRoutes } from './routes/voice.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 
 /** buildApp 选项 */
@@ -48,15 +50,21 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const db = options.db ?? defaultDb;
 
   const app = Fastify({ logger: false });
+  // LM Studio 客户端：ai 与 voice 路由共用同一实例
+  const aiClient = options.aiClient ?? createLmStudioClient();
 
   // CORS：开放所有来源（局域网内 PWA / 采集端访问）
   app.register(cors, { origin: true });
+  // multipart：语音入库端点接收上传音频，限制单文件 25MB
+  app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
 
   // 注入 db 注册业务路由
   app.register(itemsRoutes, { db });
   app.register(categoriesRoutes, { db });
   // 注入 LM Studio 客户端注册 AI 路由
-  app.register(aiRoutes, { client: options.aiClient ?? createLmStudioClient() });
+  app.register(aiRoutes, { client: aiClient });
+  // 注入 db + LM Studio 客户端注册语音入库路由
+  app.register(voiceRoutes, { db, client: aiClient });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(
