@@ -17,6 +17,8 @@ export interface AiConfig {
   visionModel: string;
   /** 向量嵌入默认模型 */
   embedModel: string;
+  /** 语音转写（STT / whisper）默认模型 */
+  sttModel: string;
   /** 请求超时毫秒数（首次加载模型较慢，默认给到 120s） */
   timeoutMs: number;
 }
@@ -44,6 +46,13 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
     visionModel: env.LMSTUDIO_VISION_MODEL ?? 'qwen/qwen3-vl-8b',
     // 嵌入模型：默认 nomic-embed（768 维）
     embedModel: env.LMSTUDIO_EMBED_MODEL ?? 'text-embedding-nomic-embed-text-v1.5',
+    // 语音转写模型（STT / whisper）：默认 whisper-large-v3-turbo。
+    // 注意：这里的 id 以 LM Studio 实际加载的模型为准——加载完成后可用
+    //   GET /v1/models（即 listModels()）确认真实可用的 id。
+    // 不同打包来源 id 可能不同，常见为 'whisper-large-v3-turbo' 或
+    //   'mlx-community/whisper-large-v3-turbo'（mlx 版）。
+    // 若默认值与实际加载的 id 不一致，可用环境变量 LMSTUDIO_STT_MODEL 覆盖。
+    sttModel: env.LMSTUDIO_STT_MODEL ?? 'whisper-large-v3-turbo',
     timeoutMs,
   };
 }

@@ -14,6 +14,7 @@ const testConfig: AiConfig = {
   textModel: 'text-model',
   visionModel: 'vision-model',
   embedModel: 'embed-model',
+  sttModel: 'stt-model',
   timeoutMs: 1000,
 };
 
@@ -21,17 +22,26 @@ const testConfig: AiConfig = {
 function makeFakeOpenai(overrides?: {
   chatCreate?: ReturnType<typeof vi.fn>;
   embeddingsCreate?: ReturnType<typeof vi.fn>;
+  transcriptionsCreate?: ReturnType<typeof vi.fn>;
   modelsList?: ReturnType<typeof vi.fn>;
-}): { openai: OpenAILike; chatCreate: ReturnType<typeof vi.fn>; embeddingsCreate: ReturnType<typeof vi.fn>; modelsList: ReturnType<typeof vi.fn> } {
+}): {
+  openai: OpenAILike;
+  chatCreate: ReturnType<typeof vi.fn>;
+  embeddingsCreate: ReturnType<typeof vi.fn>;
+  transcriptionsCreate: ReturnType<typeof vi.fn>;
+  modelsList: ReturnType<typeof vi.fn>;
+} {
   const chatCreate = overrides?.chatCreate ?? vi.fn();
   const embeddingsCreate = overrides?.embeddingsCreate ?? vi.fn();
+  const transcriptionsCreate = overrides?.transcriptionsCreate ?? vi.fn();
   const modelsList = overrides?.modelsList ?? vi.fn();
   const openai: OpenAILike = {
     chat: { completions: { create: chatCreate } },
     embeddings: { create: embeddingsCreate },
+    audio: { transcriptions: { create: transcriptionsCreate } },
     models: { list: modelsList },
   };
-  return { openai, chatCreate, embeddingsCreate, modelsList };
+  return { openai, chatCreate, embeddingsCreate, transcriptionsCreate, modelsList };
 }
 
 describe('chatText', () => {
@@ -207,6 +217,75 @@ describe('embed', () => {
       model: 'embed-model',
       input: ['牛奶', '鸡蛋'],
       encoding_format: 'float',
+    });
+  });
+});
+
+describe('transcribe', () => {
+  it('成功返回 result.text，默认 model=config.sttModel 且 language=zh', async () => {
+    const transcriptionsCreate = vi.fn().mockResolvedValue({ text: '我买了两盒牛奶' });
+    const { openai } = makeFakeOpenai({ transcriptionsCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.transcribe({ audio: Buffer.from('fake-wav') });
+    expect(out).toBe('我买了两盒牛奶');
+    // 断言默认入参：model 用 config.sttModel，language 默认 zh，且带上传 file
+    expect(transcriptionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'stt-model', language: 'zh' }),
+    );
+    const body = transcriptionsCreate.mock.calls[0]?.[0] as { file?: unknown };
+    expect(body.file).toBeDefined();
+  });
+
+  it('显式 model/language/prompt 透传', async () => {
+    const transcriptionsCreate = vi.fn().mockResolvedValue({ text: 'ok' });
+    const { openai } = makeFakeOpenai({ transcriptionsCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    await client.transcribe({
+      audio: Buffer.from('fake-wav'),
+      model: 'custom-whisper',
+      language: 'en',
+      prompt: '领域提示',
+    });
+
+    expect(transcriptionsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'custom-whisper', language: 'en', prompt: '领域提示' }),
+    );
+  });
+
+  it('result.text 缺失抛 bad_response', async () => {
+    const transcriptionsCreate = vi.fn().mockResolvedValue({ text: null });
+    const { openai } = makeFakeOpenai({ transcriptionsCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    await expect(client.transcribe({ audio: Buffer.from('x') })).rejects.toMatchObject({
+      name: 'LmStudioError',
+      kind: 'bad_response',
+    });
+  });
+
+  it('result.text 非字符串抛 bad_response', async () => {
+    const transcriptionsCreate = vi.fn().mockResolvedValue({ text: 123 as unknown as string });
+    const { openai } = makeFakeOpenai({ transcriptionsCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    await expect(client.transcribe({ audio: Buffer.from('x') })).rejects.toMatchObject({
+      name: 'LmStudioError',
+      kind: 'bad_response',
+    });
+  });
+
+  it('create 抛连接类错误映射为 connection', async () => {
+    const transcriptionsCreate = vi.fn().mockRejectedValue(
+      new APIConnectionError({ message: 'fetch failed', cause: new Error('ECONNREFUSED') }),
+    );
+    const { openai } = makeFakeOpenai({ transcriptionsCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    await expect(client.transcribe({ audio: Buffer.from('x') })).rejects.toMatchObject({
+      name: 'LmStudioError',
+      kind: 'connection',
     });
   });
 });
