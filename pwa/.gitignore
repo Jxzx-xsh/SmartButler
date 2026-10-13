@@ -1,0 +1,17 @@
+# 依赖与构建产物
+node_modules/
+dist/
+dev-dist/
+*.tsbuildinfo
+
+# 本地环境变量（保留示例）
+.env
+*.local
+!.env.example
+
+# 工作流产物，不入库
+.agents/
+
+# 编辑器 / 系统
+.DS_Store
+*.log

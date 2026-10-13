@@ -1,0 +1,28 @@
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.danger {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.warn {
+  color: var(--color-warn);
+  background: var(--color-warn-bg);
+}
+
+.ok {
+  color: var(--color-ok);
+  background: var(--color-ok-bg);
+}
+
+.muted {
+  color: var(--color-muted);
+  background: var(--color-muted-bg);
+}

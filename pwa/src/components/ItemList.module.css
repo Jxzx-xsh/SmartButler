@@ -1,0 +1,42 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 16px;
+}
+
+.filter {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 140px;
+}
+
+.filterLabel {
+  font-size: 12px;
+  color: var(--color-text-soft);
+}
+
+.control {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+}
+
+.addBtn {
+  flex: 0 0 auto;
+  padding: 9px 18px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  background: var(--color-primary);
+  color: #fff;
+  border: 1px solid var(--color-primary);
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
