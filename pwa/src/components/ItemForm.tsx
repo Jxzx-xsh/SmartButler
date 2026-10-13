@@ -28,6 +28,10 @@ export function ItemForm({
 }: ItemFormProps) {
   const categoriesQuery = useCategoriesQuery();
 
+  // 是否编辑模式：有 initialItem 即为编辑(PATCH)，否则为新建(POST)。
+  // 两者的空字段语义不同：新建省略键（undefined），编辑传 null（显式清空）。
+  const isEdit = initialItem !== undefined;
+
   const [name, setName] = useState(initialItem?.name ?? '');
   const [quantity, setQuantity] = useState(String(initialItem?.quantity ?? 1));
   const [unit, setUnit] = useState(initialItem?.unit ?? '');
@@ -73,18 +77,51 @@ export function ItemForm({
       quantity: qty,
       source: 'manual',
     };
-    body.unit = unit.trim() || null;
-    body.categoryId = categoryId ? Number(categoryId) : null;
-    body.location = location.trim() || null;
-    body.note = note.trim() || null;
+
+    // 空的可选字段：编辑传 null（显式清空），新建省略键（走后端默认 / 不写入）。
+    // JSON.stringify 丢弃 undefined、保留 null，故新建不设键 = 不发送，编辑设 null = 发送清空。
+    const trimmedUnit = unit.trim();
+    if (trimmedUnit) {
+      body.unit = trimmedUnit;
+    } else if (isEdit) {
+      body.unit = null;
+    }
+
+    if (categoryId) {
+      body.categoryId = Number(categoryId);
+    } else if (isEdit) {
+      body.categoryId = null;
+    }
+
+    const trimmedLocation = location.trim();
+    if (trimmedLocation) {
+      body.location = trimmedLocation;
+    } else if (isEdit) {
+      body.location = null;
+    }
+
+    const trimmedNote = note.trim();
+    if (trimmedNote) {
+      body.note = trimmedNote;
+    } else if (isEdit) {
+      body.note = null;
+    }
 
     if (expiryMode === 'direct') {
-      // 直接选到期日：只传 expiryDate，清掉保质期组合
-      body.expiryDate = dateStrToMillis(expiryDate);
-      body.purchaseDate = null;
-      body.shelfLifeDays = null;
+      // 直接选到期日：设置 expiryDate（空值编辑清为 null、新建省略），并清掉保质期组合。
+      const expiryMs = dateStrToMillis(expiryDate);
+      if (expiryMs !== null) {
+        body.expiryDate = expiryMs;
+      } else if (isEdit) {
+        body.expiryDate = null;
+      }
+      // 保质期组合：编辑传 null 清空，新建省略键
+      if (isEdit) {
+        body.purchaseDate = null;
+        body.shelfLifeDays = null;
+      }
     } else {
-      // 购入日期 + 保质期：传两者，不放 expiryDate 键让后端重算。
+      // 购入日期 + 保质期：传两者，绝不放 expiryDate 键让后端重算。
       // 关键：不能传 expiryDate: null —— 后端 PATCH 仅在 expiryDate === undefined 时重算，
       // 传 null 会被判为「显式提供」而绕过重算、把到期日清空。省略该键后
       // JSON.stringify 会丢弃它，后端收到 undefined，新建(??)与编辑(=== undefined)均能正确重算。
@@ -94,8 +131,17 @@ export function ItemForm({
         setValidationError('保质期天数需为非负整数');
         return;
       }
-      body.purchaseDate = purchaseMs;
-      body.shelfLifeDays = shelf;
+      // 空值：编辑传 null 清空，新建省略键
+      if (purchaseMs !== null) {
+        body.purchaseDate = purchaseMs;
+      } else if (isEdit) {
+        body.purchaseDate = null;
+      }
+      if (shelf !== null) {
+        body.shelfLifeDays = shelf;
+      } else if (isEdit) {
+        body.shelfLifeDays = null;
+      }
     }
 
     onSubmit(body);

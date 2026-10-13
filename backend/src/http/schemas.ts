@@ -24,24 +24,24 @@ export const createItemBodySchema = z.object({
   name: z.string().trim().min(1, 'name 不能为空'),
   /** 数量：可选正整数，默认 1 */
   quantity: z.number().int().positive().optional(),
-  /** 单位：可选 */
-  unit: z.string().optional(),
-  /** 分类外键：可选正整数 */
-  categoryId: z.number().int().positive().optional(),
-  /** 存放位置：可选 */
-  location: z.string().optional(),
-  /** 购买日期：可选，接受 ISO 字符串或毫秒，归一化为毫秒整数 */
-  purchaseDate: zMillisDate.optional(),
-  /** 保质期天数：可选非负整数 */
-  shelfLifeDays: z.number().int().nonnegative().optional(),
-  /** 到期日期：可选，接受 ISO 字符串或毫秒，归一化为毫秒整数 */
-  expiryDate: zMillisDate.optional(),
+  /** 单位：可空可选（null = 显式清空，undefined/省略 = 不改） */
+  unit: z.string().nullable().optional(),
+  /** 分类外键：可空可选正整数（null = 显式清空） */
+  categoryId: z.number().int().positive().nullable().optional(),
+  /** 存放位置：可空可选（null = 显式清空） */
+  location: z.string().nullable().optional(),
+  /** 购买日期：可空可选，接受 ISO 字符串或毫秒，归一化为毫秒整数（null = 显式清空） */
+  purchaseDate: zMillisDate.nullable().optional(),
+  /** 保质期天数：可空可选非负整数（null = 显式清空） */
+  shelfLifeDays: z.number().int().nonnegative().nullable().optional(),
+  /** 到期日期：可空可选，接受 ISO 字符串或毫秒，归一化为毫秒整数（null = 显式清空到期日，不重算） */
+  expiryDate: zMillisDate.nullable().optional(),
   /** 是否已确认：可选 */
   confirmed: z.boolean().optional(),
   /** 来源：可选枚举 */
   source: sourceEnum.optional(),
-  /** 备注：可选 */
-  note: z.string().optional(),
+  /** 备注：可空可选（null = 显式清空） */
+  note: z.string().nullable().optional(),
 });
 
 /** 解析后的创建请求体类型 */

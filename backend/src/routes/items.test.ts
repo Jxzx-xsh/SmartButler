@@ -88,6 +88,28 @@ describe('POST /api/items', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('可选字段显式传 null 时后端容错，返回 201 且 note 为 null', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/items',
+      payload: { name: '牛奶', note: null, unit: null },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.note).toBeNull();
+    expect(body.unit).toBeNull();
+  });
+
+  it('省略可选字段仍能创建，返回 201', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/items',
+      payload: { name: '牛奶' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().name).toBe('牛奶');
+  });
 });
 
 describe('GET /api/items 列表与过滤', () => {
@@ -249,6 +271,108 @@ describe('PATCH /api/items/:id', () => {
       payload: { purchaseDate: Date.UTC(2024, 0, 1), shelfLifeDays: 7, expiryDate: explicit },
     });
     expect(res.json().expiryDate).toBe(explicit);
+  });
+
+  it('显式传 note:null 清空备注，返回 200 且 note 为 null', async () => {
+    const item = createItem(db, { name: '牛奶', note: '尽快喝完' });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: { note: null },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().note).toBeNull();
+  });
+
+  it('显式传 unit/location/categoryId 为 null 时三者均清空', async () => {
+    db.insert(categories).values({ name: '乳制品' }).run();
+    const item = createItem(db, {
+      name: '牛奶',
+      unit: '盒',
+      location: '冰箱',
+      categoryId: 1,
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: { unit: null, location: null, categoryId: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.unit).toBeNull();
+    expect(body.location).toBeNull();
+    expect(body.categoryId).toBeNull();
+  });
+
+  it('清空 purchaseDate/shelfLifeDays（均传 null）时到期日被重算为 null', async () => {
+    const item = createItem(db, {
+      name: '酸奶',
+      purchaseDate: Date.UTC(2024, 0, 1),
+      shelfLifeDays: 5,
+    });
+    // 原本有到期日
+    expect(item.expiryDate).not.toBeNull();
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: { purchaseDate: null, shelfLifeDays: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.purchaseDate).toBeNull();
+    expect(body.shelfLifeDays).toBeNull();
+    // computeExpiryDate(null, null) = null，清空组合应重算为 null 而非旧值
+    expect(body.expiryDate).toBeNull();
+  });
+
+  it('显式传 expiryDate:null 清空到期日且不触发重算', async () => {
+    const item = createItem(db, {
+      name: '酸奶',
+      purchaseDate: Date.UTC(2024, 0, 1),
+      shelfLifeDays: 5,
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: { expiryDate: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.expiryDate).toBeNull();
+    // 未动 purchaseDate/shelfLifeDays，二者保持原值（未被重算路径影响）
+    expect(body.purchaseDate).toBe(Date.UTC(2024, 0, 1));
+    expect(body.shelfLifeDays).toBe(5);
+  });
+
+  it('同时传 purchaseDate/shelfLifeDays 与 expiryDate:null 时显式 null 优先、不重算', async () => {
+    const item = createItem(db, { name: '酸奶' });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: {
+        purchaseDate: Date.UTC(2024, 0, 1),
+        shelfLifeDays: 7,
+        expiryDate: null,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // 显式 null 的三态语义优先于重算
+    expect(body.expiryDate).toBeNull();
+    expect(body.purchaseDate).toBe(Date.UTC(2024, 0, 1));
+    expect(body.shelfLifeDays).toBe(7);
+  });
+
+  it('省略 expiryDate 键只传 purchaseDate/shelfLifeDays 时仍重算到期日（回归保护 Task 3）', async () => {
+    const item = createItem(db, { name: '酸奶' });
+    const purchaseDate = Date.UTC(2024, 0, 1);
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/items/${item.id}`,
+      payload: { purchaseDate, shelfLifeDays: 7 },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().expiryDate).toBe(purchaseDate + 7 * MS_PER_DAY);
   });
 
   it('不存在返回 404', async () => {

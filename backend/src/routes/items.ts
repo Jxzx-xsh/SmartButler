@@ -124,7 +124,10 @@ export async function itemsRoutes(
     };
 
     // 领域策略：改动 purchaseDate/shelfLifeDays 且未显式给 expiryDate 时重算到期日。
-    // 仓储 updateItem 刻意不含此策略，故在路由层补齐（取当前记录补全缺失值）。
+    // 仓储 updateItem 刻意不含此策略，故在路由层补齐（取当前记录补全未提供的字段）。
+    // 三态：expiryDate === undefined（省略键）→ 若动了 purchaseDate/shelfLifeDays 则重算；
+    //       expiryDate === null（显式）→ 清空到期日、不重算（下方条件天然排除 null）；
+    //       expiryDate 为数字 → 直接设置、不重算。
     const touchesExpiryInputs =
       body.purchaseDate !== undefined || body.shelfLifeDays !== undefined;
     if (touchesExpiryInputs && body.expiryDate === undefined) {
@@ -134,8 +137,17 @@ export async function itemsRoutes(
           error: { message: '物品不存在', code: 'ITEM_NOT_FOUND' },
         });
       }
-      const purchaseDate = patch.purchaseDate ?? current.purchaseDate;
-      const shelfLifeDays = patch.shelfLifeDays ?? current.shelfLifeDays;
+      // 用 patch 中「实际提供」的值补全：本次提供了该键（含显式 null）就用 patch 值，
+      // 否则沿用当前记录。注意不能用 `??`，否则显式传入的 null（清空语义）会被
+      // 误判为「未提供」而回退到旧值，导致清空组合反而重算出旧到期日。
+      const purchaseDate =
+        patch.purchaseDate !== undefined
+          ? patch.purchaseDate
+          : current.purchaseDate;
+      const shelfLifeDays =
+        patch.shelfLifeDays !== undefined
+          ? patch.shelfLifeDays
+          : current.shelfLifeDays;
       patch.expiryDate = computeExpiryDate(purchaseDate, shelfLifeDays);
     }
 
