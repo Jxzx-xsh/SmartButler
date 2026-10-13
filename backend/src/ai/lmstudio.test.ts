@@ -187,7 +187,11 @@ describe('embed', () => {
 
     const out = await client.embed({ input: '牛奶' });
     expect(out).toEqual([[0.1, 0.2, 0.3]]);
-    expect(embeddingsCreate).toHaveBeenCalledWith({ model: 'embed-model', input: ['牛奶'] });
+    expect(embeddingsCreate).toHaveBeenCalledWith({
+      model: 'embed-model',
+      input: ['牛奶'],
+      encoding_format: 'float',
+    });
   });
 
   it('string[] 入参返回多条 number[][]', async () => {
@@ -199,7 +203,11 @@ describe('embed', () => {
 
     const out = await client.embed({ input: ['牛奶', '鸡蛋'] });
     expect(out).toEqual([[1, 2], [3, 4]]);
-    expect(embeddingsCreate).toHaveBeenCalledWith({ model: 'embed-model', input: ['牛奶', '鸡蛋'] });
+    expect(embeddingsCreate).toHaveBeenCalledWith({
+      model: 'embed-model',
+      input: ['牛奶', '鸡蛋'],
+      encoding_format: 'float',
+    });
   });
 });
 

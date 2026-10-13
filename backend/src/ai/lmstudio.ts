@@ -120,6 +120,13 @@ interface ChatCompletionResult {
 interface EmbeddingCreateBody {
   model: string;
   input: string[];
+  /**
+   * 强制浮点返回格式。
+   * openai SDK 默认用 base64 请求并在客户端解码，但 LM Studio 的 nomic 始终返回
+   * 浮点数组，导致 SDK 误把浮点数组当 base64 解码、得到 192 维全零的坏向量。
+   * 显式指定 float 可绕过该解码路径，拿到正确的 768 维向量。
+   */
+  encoding_format: 'float';
 }
 
 /** embeddings.create 返回结构。 */
@@ -271,6 +278,8 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
       const result = await openai.embeddings.create({
         model: opts.model ?? config.embedModel,
         input,
+        // 显式 float，避免 SDK 默认 base64 解码路径破坏 LM Studio 返回的浮点向量
+        encoding_format: 'float',
       });
       const data = result.data;
       if (!Array.isArray(data) || data.length === 0) {
