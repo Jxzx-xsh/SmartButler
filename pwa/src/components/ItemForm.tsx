@@ -84,7 +84,10 @@ export function ItemForm({
       body.purchaseDate = null;
       body.shelfLifeDays = null;
     } else {
-      // 购入日期 + 保质期：传两者，不传 expiryDate 让后端计算
+      // 购入日期 + 保质期：传两者，不放 expiryDate 键让后端重算。
+      // 关键：不能传 expiryDate: null —— 后端 PATCH 仅在 expiryDate === undefined 时重算，
+      // 传 null 会被判为「显式提供」而绕过重算、把到期日清空。省略该键后
+      // JSON.stringify 会丢弃它，后端收到 undefined，新建(??)与编辑(=== undefined)均能正确重算。
       const purchaseMs = dateStrToMillis(purchaseDate);
       const shelf = shelfLifeDays ? Number(shelfLifeDays) : null;
       if (shelf !== null && (!Number.isInteger(shelf) || shelf < 0)) {
@@ -93,7 +96,6 @@ export function ItemForm({
       }
       body.purchaseDate = purchaseMs;
       body.shelfLifeDays = shelf;
-      body.expiryDate = null;
     }
 
     onSubmit(body);
