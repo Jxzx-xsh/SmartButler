@@ -26,6 +26,7 @@ import { categoriesRoutes } from './routes/categories.js';
 import { aiRoutes } from './routes/ai.js';
 import { voiceRoutes } from './routes/voice.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
+import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
 
 /** buildApp 选项 */
 export interface BuildAppOptions {
@@ -33,6 +34,8 @@ export interface BuildAppOptions {
   db?: AppDatabase;
   /** 注入的 LM Studio 客户端，缺省调用 createLmStudioClient() */
   aiClient?: LmStudioClient;
+  /** 注入的 whisper.cpp 转写器，缺省调用 createWhisperTranscriber() */
+  transcriber?: WhisperTranscriber;
 }
 
 /** 把 zod 的 issues 概要成一句可读信息 */
@@ -52,6 +55,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false });
   // LM Studio 客户端：ai 与 voice 路由共用同一实例
   const aiClient = options.aiClient ?? createLmStudioClient();
+  // 本地 whisper.cpp 转写器：voice 路由语音转写由它承担
+  const transcriber = options.transcriber ?? createWhisperTranscriber();
 
   // CORS：开放所有来源（局域网内 PWA / 采集端访问）
   app.register(cors, { origin: true });
@@ -63,8 +68,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(categoriesRoutes, { db });
   // 注入 LM Studio 客户端注册 AI 路由
   app.register(aiRoutes, { client: aiClient });
-  // 注入 db + LM Studio 客户端注册语音入库路由
-  app.register(voiceRoutes, { db, client: aiClient });
+  // 注入 db + LM Studio 客户端 + whisper 转写器注册语音入库路由
+  app.register(voiceRoutes, { db, client: aiClient, transcriber });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(

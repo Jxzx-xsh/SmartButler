@@ -9,6 +9,7 @@ import { buildApp } from '../app.js';
 import { LmStudioError } from '../ai/errors.js';
 import { createCategory } from '../db/repository.js';
 import type { LmStudioClient } from '../ai/lmstudio.js';
+import type { WhisperTranscriber } from '../ai/whisper.js';
 
 let app: FastifyInstance;
 let db: AppDatabase;
@@ -20,10 +21,17 @@ function makeMockClient(overrides: Partial<LmStudioClient> = {}): LmStudioClient
     chatTextJson: vi.fn(),
     chatVision: vi.fn(),
     embed: vi.fn(),
-    transcribe: vi.fn(),
     listModels: vi.fn(),
     ...overrides,
   } as LmStudioClient;
+}
+
+/** 构造一个 mock whisper 转写器。 */
+function makeMockTranscriber(overrides: Partial<WhisperTranscriber> = {}): WhisperTranscriber {
+  return {
+    transcribe: vi.fn().mockResolvedValue('买了两盒牛奶'),
+    ...overrides,
+  } as WhisperTranscriber;
 }
 
 /** 构造一个 multipart/form-data 请求体，含单个文件字段 file。 */
@@ -156,11 +164,11 @@ describe('POST /api/voice/ingest-text', () => {
 describe('POST /api/voice/ingest', () => {
   it('全链路：转写 + 解析入库，source=voice', async () => {
     const client = makeMockClient({
-      // normalizeAudio 需要真实 ffmpeg——这里避开 ffmpeg，直接 mock transcribe 不足以绕过。
-      transcribe: vi.fn().mockResolvedValue('买了两盒牛奶'),
       chatTextJson: vi.fn().mockResolvedValue({ items: [{ name: '牛奶', quantity: 2, unit: '盒' }] }),
     });
-    app = buildApp({ db, aiClient: client });
+    // 转写由注入的 whisper transcriber 承担；normalizeAudio 仍需真实 ffmpeg。
+    const transcriber = makeMockTranscriber({ transcribe: vi.fn().mockResolvedValue('买了两盒牛奶') });
+    app = buildApp({ db, aiClient: client, transcriber });
     await app.ready();
 
     // 用一段极短静音 wav Buffer 作为上传内容；normalizeAudio 需要 ffmpeg，
@@ -171,7 +179,7 @@ describe('POST /api/voice/ingest', () => {
 
     if (res.statusCode === 503 && res.json().error?.code === 'FFMPEG_UNAVAILABLE') {
       // 本机无 ffmpeg：规范化不可用分支，转写不会被调用
-      expect(client.transcribe).not.toHaveBeenCalled();
+      expect(transcriber.transcribe).not.toHaveBeenCalled();
       return;
     }
 
@@ -181,7 +189,7 @@ describe('POST /api/voice/ingest', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].name).toBe('牛奶');
     expect(body.items[0].source).toBe('voice');
-    expect(client.transcribe).toHaveBeenCalledOnce();
+    expect(transcriber.transcribe).toHaveBeenCalledOnce();
   });
 
   it('缺少音频文件时返回 400 NO_AUDIO', async () => {
@@ -213,11 +221,11 @@ describe('POST /api/voice/ingest', () => {
   });
 
   it('transcribe 抛连接类 LmStudioError 时返回 503 STT_UNAVAILABLE', async () => {
-    const client = makeMockClient({
-      transcribe: vi.fn().mockRejectedValue(new LmStudioError('无法连接 LM Studio', 'connection')),
-      chatTextJson: vi.fn(),
+    const client = makeMockClient({ chatTextJson: vi.fn() });
+    const transcriber = makeMockTranscriber({
+      transcribe: vi.fn().mockRejectedValue(new LmStudioError('whisper 不可用', 'connection')),
     });
-    app = buildApp({ db, aiClient: client });
+    app = buildApp({ db, aiClient: client, transcriber });
     await app.ready();
 
     const wav = buildSilentWav();

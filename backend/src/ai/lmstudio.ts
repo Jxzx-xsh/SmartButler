@@ -1,14 +1,13 @@
 /**
  * LM Studio 客户端封装（基于官方 openai 包）。
  *
- * 对外暴露 chatText / chatTextJson / chatVision / embed / listModels 五个方法，
+ * 对外暴露 chatText / chatTextJson / chatVision / embed / listModels 五个方法
+ * （语音转写 STT 已迁移至本地 whisper.cpp，见 src/ai/whisper.ts），
  * 统一把 SDK 抛出的错误映射为带 kind 的 LmStudioError，便于调度器判断可否重试。
  * OpenAI 实例支持依赖注入，测试时注入 fake 即可脱离真实网络。
  */
 
-import { createReadStream } from 'node:fs';
-
-import OpenAI, { APIConnectionTimeoutError, APIConnectionError, APIUserAbortError, toFile } from 'openai';
+import OpenAI, { APIConnectionTimeoutError, APIConnectionError, APIUserAbortError } from 'openai';
 
 import { loadAiConfig, type AiConfig } from './config.js';
 import { LmStudioError } from './errors.js';
@@ -59,22 +58,6 @@ export interface EmbedOptions {
   input: string | string[];
 }
 
-/** transcribe（语音转写）入参。 */
-export interface TranscribeOptions {
-  /** 待转写音频：Buffer（已读入内存）或本地文件路径（string） */
-  audio: Buffer | string;
-  /** 上传文件名；Buffer 入参时用于标识，缺省 'audio.wav' */
-  filename?: string;
-  /** 音频 MIME 类型；Buffer 入参时附带，缺省不设 */
-  mimeType?: string;
-  /** 模型名，缺省用 config.sttModel */
-  model?: string;
-  /** 语言提示，缺省 'zh'（中文家庭场景） */
-  language?: string;
-  /** 可选提示词，辅助领域词识别 */
-  prompt?: string;
-}
-
 /** 对外客户端接口。 */
 export interface LmStudioClient {
   /** 文本对话，返回首个 choice 的 content */
@@ -85,8 +68,6 @@ export interface LmStudioClient {
   chatVision(opts: ChatVisionOptions): Promise<string>;
   /** 文本嵌入，始终返回 number[][]（单条也包成一维数组的数组） */
   embed(opts: EmbedOptions): Promise<number[][]>;
-  /** 语音转写（STT），返回识别出的文本 */
-  transcribe(opts: TranscribeOptions): Promise<string>;
   /** 列出可用模型 id */
   listModels(): Promise<string[]>;
 }
@@ -105,11 +86,6 @@ export interface OpenAILike {
   };
   embeddings: {
     create(body: EmbeddingCreateBody): Promise<EmbeddingResult>;
-  };
-  audio: {
-    transcriptions: {
-      create(body: AudioTranscriptionCreateBody): Promise<AudioTranscriptionResult>;
-    };
   };
   models: {
     list(): Promise<ModelsListResult>;
@@ -158,23 +134,6 @@ interface EmbeddingCreateBody {
 /** embeddings.create 返回结构。 */
 interface EmbeddingResult {
   data?: Array<{ embedding?: number[] | null } | null>;
-}
-
-/**
- * audio.transcriptions.create 请求体（本封装用到的字段）。
- * file 用 unknown：实际由 openai 的 toFile() 产出的 Uploadable，不同版本结构不同，
- * 这里不强绑定 SDK 内部类型，仅声明本封装读写的字段。
- */
-interface AudioTranscriptionCreateBody {
-  file: unknown;
-  model: string;
-  language?: string;
-  prompt?: string;
-}
-
-/** audio.transcriptions.create 返回结构（本封装用到的字段）。 */
-interface AudioTranscriptionResult {
-  text?: string | null;
 }
 
 /** models.list 返回结构。 */
@@ -368,40 +327,6 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
-  async function transcribe(opts: TranscribeOptions): Promise<string> {
-    try {
-      // 把 Buffer 或文件路径构造成可上传的 File：
-      // - Buffer：直接经 toFile 包装，带上文件名与可选 MIME 类型
-      // - string（文件路径）：用可读流经 toFile 包装
-      const file =
-        typeof opts.audio === 'string'
-          ? await toFile(createReadStream(opts.audio), opts.filename ?? 'audio.wav', {
-              ...(opts.mimeType !== undefined ? { type: opts.mimeType } : {}),
-            })
-          : await toFile(opts.audio, opts.filename ?? 'audio.wav', {
-              ...(opts.mimeType !== undefined ? { type: opts.mimeType } : {}),
-            });
-
-      const body: AudioTranscriptionCreateBody = {
-        file,
-        model: opts.model ?? config.sttModel,
-        language: opts.language ?? 'zh',
-      };
-      if (opts.prompt !== undefined) {
-        body.prompt = opts.prompt;
-      }
-
-      const result = await openai.audio.transcriptions.create(body);
-      const text = result.text;
-      if (typeof text !== 'string' || text.length === 0) {
-        throw new LmStudioError('LM Studio 返回缺少转写文本', 'bad_response', result);
-      }
-      return text;
-    } catch (err) {
-      throw mapError(err);
-    }
-  }
-
   async function listModels(): Promise<string[]> {
     try {
       const result = await openai.models.list();
@@ -417,5 +342,5 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
-  return { chatText, chatTextJson, chatVision, embed, transcribe, listModels };
+  return { chatText, chatTextJson, chatVision, embed, listModels };
 }

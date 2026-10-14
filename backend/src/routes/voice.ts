@@ -18,6 +18,7 @@ import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 
 import type { AppDatabase } from '../db/client.js';
 import type { LmStudioClient } from '../ai/lmstudio.js';
+import type { WhisperTranscriber } from '../ai/whisper.js';
 import type { AiQueue } from '../ai/queue.js';
 import { LmStudioError } from '../ai/errors.js';
 import { createItemParser, type ParsedItem } from '../ai/item-parser.js';
@@ -26,12 +27,14 @@ import { createItem, listCategories, type CreateItemInput } from '../db/reposito
 import type { Item } from '../db/schema.js';
 import { ingestTextBodySchema } from '../http/schemas.js';
 
-/** 路由插件 opts：注入数据库、LM Studio 客户端与可选 AI 队列。 */
+/** 路由插件 opts：注入数据库、LM Studio 客户端、whisper 转写器与可选 AI 队列。 */
 export interface VoiceRoutesOptions extends FastifyPluginOptions {
   /** 数据库实例 */
   db: AppDatabase;
-  /** LM Studio 客户端 */
+  /** LM Studio 客户端（供 item-parser 解析用；STT 已不走它） */
   client: LmStudioClient;
+  /** 本地 whisper.cpp 转写器：/api/voice/ingest 的语音转写由它承担 */
+  transcriber: WhisperTranscriber;
   /** 可选 AI 任务队列：提供时解析任务经 enqueueImmediate 串行提交 */
   queue?: AiQueue;
 }
@@ -52,7 +55,7 @@ export async function voiceRoutes(
   app: FastifyInstance,
   opts: VoiceRoutesOptions,
 ): Promise<void> {
-  const { db, client, queue } = opts;
+  const { db, client, transcriber, queue } = opts;
   // 构造物品解析器：queue 存在时解析任务走队列即时串行提交
   const parser = createItemParser(queue ? { client, queue } : { client });
 
@@ -144,14 +147,15 @@ export async function voiceRoutes(
       });
     }
 
-    // 语音转写（whisper）：连接/超时类错误 → 503 STT_UNAVAILABLE；结构异常 → 502
+    // 语音转写（本地 whisper.cpp）：连接/超时类错误 → 503 STT_UNAVAILABLE；
+    // 非零退出/空转写等结构异常 → 502。transcriber 复用 LmStudioError，故下方
+    // 错误分支与原 LM Studio 方案完全一致。
+    // 注意：路由侧已先 normalizeAudio 转过 wav，whisper.transcribe 内部对 wav
+    // 还会再 normalize 一次（幂等、开销小），保持路由侧 normalize 不动以维持
+    // 既有 FFMPEG_UNAVAILABLE 分支与测试。
     let transcript: string;
     try {
-      transcript = await client.transcribe({
-        audio: wavBuffer,
-        filename: 'audio.wav',
-        mimeType: 'audio/wav',
-      });
+      transcript = await transcriber.transcribe({ audio: wavBuffer });
     } catch (err) {
       if (err instanceof LmStudioError) {
         if (err.kind === 'connection' || err.kind === 'timeout') {

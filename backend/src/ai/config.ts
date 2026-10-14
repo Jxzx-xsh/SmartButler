@@ -17,10 +17,28 @@ export interface AiConfig {
   visionModel: string;
   /** 向量嵌入默认模型 */
   embedModel: string;
-  /** 语音转写（STT / whisper）默认模型 */
+  /**
+   * 语音转写（STT）旧配置：LM Studio whisper 模型 id。
+   * 注意：STT 现由本地 whisper.cpp 承担（见 src/ai/whisper.ts），此字段为
+   * LM Studio 旧路径遗留，当前不参与转写，保留以便回滚或他用。
+   */
   sttModel: string;
   /** 请求超时毫秒数（首次加载模型较慢，默认给到 120s） */
   timeoutMs: number;
+  /**
+   * whisper.cpp 命令（whisper-cli）路径或命令名。
+   * 缺省 'whisper-cli'（走 PATH）；brew install whisper-cpp 后实际在
+   * /opt/homebrew/bin/whisper-cli。可用环境变量 WHISPER_CLI_PATH 覆盖为绝对路径。
+   */
+  whisperCliPath: string;
+  /**
+   * whisper.cpp 使用的 ggml 模型文件绝对路径。
+   * 注意：须为 ggml `.bin` 模型，**不是 GGUF**；可从
+   * huggingface.co/ggerganov/whisper.cpp 获取。可用环境变量 WHISPER_MODEL_PATH 覆盖。
+   */
+  whisperModelPath: string;
+  /** whisper 转写语言，缺省 'zh'（中文家庭场景）。可用 WHISPER_LANGUAGE 覆盖。 */
+  whisperLanguage: string;
 }
 
 /** 超时默认值：首次加载模型可能耗时数十秒，预留充足余量。 */
@@ -56,5 +74,14 @@ export function loadAiConfig(env: NodeJS.ProcessEnv = process.env): AiConfig {
     // 若默认值与实际加载的 id 不一致，可用环境变量 LMSTUDIO_STT_MODEL 覆盖。
     sttModel: env.LMSTUDIO_STT_MODEL ?? 'whisper-large-v3-turbo',
     timeoutMs,
+    // whisper.cpp 命令：缺省走 PATH 的 whisper-cli（brew 安装后在
+    // /opt/homebrew/bin/whisper-cli）；可用 WHISPER_CLI_PATH 覆盖为绝对路径。
+    whisperCliPath: env.WHISPER_CLI_PATH ?? 'whisper-cli',
+    // whisper.cpp ggml 模型文件：须为 ggml .bin（非 GGUF），
+    // 可从 huggingface.co/ggerganov/whisper.cpp 获取；可用 WHISPER_MODEL_PATH 覆盖。
+    whisperModelPath:
+      env.WHISPER_MODEL_PATH ?? '/Users/hb02995/other-work/SmartButler/backend/models/ggml-small.bin',
+    // 转写语言：缺省中文；可用 WHISPER_LANGUAGE 覆盖。
+    whisperLanguage: env.WHISPER_LANGUAGE ?? 'zh',
   };
 }
