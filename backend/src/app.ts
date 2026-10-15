@@ -27,6 +27,12 @@ import { aiRoutes } from './routes/ai.js';
 import { voiceRoutes } from './routes/voice.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
+import {
+  captureRoutes,
+  createCaptureGatewayHolder,
+  type CaptureGatewayHolder,
+} from './routes/capture.js';
+import { loadCaptureConfig } from './capture/config.js';
 
 /** buildApp 选项 */
 export interface BuildAppOptions {
@@ -36,6 +42,11 @@ export interface BuildAppOptions {
   aiClient?: LmStudioClient;
   /** 注入的 whisper.cpp 转写器，缺省调用 createWhisperTranscriber() */
   transcriber?: WhisperTranscriber;
+  /**
+   * 注入的采集网关持有者，缺省基于 loadCaptureConfig() 构造且不自动 start。
+   * server.ts 需在源非空时自动启动，故由其构造同一实例注入进来。
+   */
+  captureGateway?: CaptureGatewayHolder;
 }
 
 /** 把 zod 的 issues 概要成一句可读信息 */
@@ -57,6 +68,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const aiClient = options.aiClient ?? createLmStudioClient();
   // 本地 whisper.cpp 转写器：voice 路由语音转写由它承担
   const transcriber = options.transcriber ?? createWhisperTranscriber();
+  // 采集网关持有者：缺省基于 loadCaptureConfig() 构造（不自动 start，由 server 决定）
+  const captureGateway =
+    options.captureGateway ?? createCaptureGatewayHolder(loadCaptureConfig());
 
   // CORS：开放所有来源（局域网内 PWA / 采集端访问）
   app.register(cors, { origin: true });
@@ -70,6 +84,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(aiRoutes, { client: aiClient });
   // 注入 db + LM Studio 客户端 + whisper 转写器注册语音入库路由
   app.register(voiceRoutes, { db, client: aiClient, transcriber });
+  // 注入采集网关持有者注册采集路由
+  app.register(captureRoutes, { gateway: captureGateway });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(
