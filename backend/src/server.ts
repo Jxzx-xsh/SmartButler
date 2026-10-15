@@ -7,23 +7,77 @@
  * - 仅在作为脚本直接执行时启动（被 import 时不触发）。
  */
 
-import { buildApp } from './app.js';
+import { buildApp, createDefaultGatingController } from './app.js';
 import { db, sqlite } from './db/client.js';
 import { initSchema } from './db/init.js';
 import { createAiQueue } from './ai/queue.js';
 import { createCaptureGatewayHolder } from './routes/capture.js';
 import { loadCaptureConfig } from './capture/config.js';
+import { eventLogs } from './db/schema.js';
 
 /** 启动服务器 */
 async function start(): Promise<void> {
   // 确保表存在（幂等）
   initSchema(sqlite);
 
-  // 采集网关持有者：构造同一实例并注入 app，启动后按配置决定是否自动采集
-  const captureConfig = loadCaptureConfig();
-  const captureGateway = createCaptureGatewayHolder(captureConfig);
+  // 门控协调器：先构造，再把其 processFrame/processAudio 接到网关回调。
+  const gatingController = createDefaultGatingController();
 
-  const app = buildApp({ captureGateway });
+  // 订阅门控事件：目前只做可观测（日志 + 可选落库 eventLogs source='gating'），
+  // 不强制接 AI 队列（留给上层 Task8/Task5 消费）。落库失败吞掉不影响主流程，
+  // 容错写法对齐 src/ai/queue.ts 的 emit()。
+  gatingController.onVideoMotion((event) => {
+    console.log(
+      `[gating] 运动事件 ts=${event.timestamp} changedRatio=${event.changedRatio.toFixed(3)}`,
+    );
+    try {
+      db.insert(eventLogs)
+        .values({
+          eventType: 'gating_motion',
+          payload: JSON.stringify({
+            timestamp: event.timestamp,
+            changedRatio: event.changedRatio,
+          }),
+          source: 'gating',
+        })
+        .run();
+    } catch {
+      // 事件日志落库失败不影响主流程
+    }
+  });
+  gatingController.onAudioActivity((event) => {
+    console.log(
+      `[gating] 音频活动事件 start=${event.startTimestamp} end=${event.endTimestamp} dur=${event.durationMs}ms`,
+    );
+    try {
+      db.insert(eventLogs)
+        .values({
+          eventType: 'gating_audio',
+          payload: JSON.stringify({
+            startTimestamp: event.startTimestamp,
+            endTimestamp: event.endTimestamp,
+            durationMs: event.durationMs,
+            frameCount: event.frameCount,
+          }),
+          source: 'gating',
+        })
+        .run();
+    } catch {
+      // 事件日志落库失败不影响主流程
+    }
+  });
+
+  // 采集网关持有者：把门控 processFrame/processAudio 作为 onFrame/onAudio 注入
+  // baseOptions。经 FEAT-002 的回调透传，setSource 重建底层网关后仍生效。
+  const captureConfig = loadCaptureConfig();
+  const captureGateway = createCaptureGatewayHolder({
+    ...captureConfig,
+    onFrame: (buffer, timestamp) => gatingController.processFrame(buffer, timestamp),
+    onAudio: (pcmChunk, timestamp) => gatingController.processAudio(pcmChunk, timestamp),
+  });
+
+  // 同一门控实例注入 app（供 GET /api/gating/status 读取统计）
+  const app = buildApp({ captureGateway, gatingController });
 
   // 构建并启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
   const aiQueue = createAiQueue({ db });

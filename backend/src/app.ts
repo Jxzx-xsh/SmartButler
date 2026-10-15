@@ -33,6 +33,11 @@ import {
   type CaptureGatewayHolder,
 } from './routes/capture.js';
 import { loadCaptureConfig } from './capture/config.js';
+import { gatingRoutes } from './routes/gating.js';
+import { createGatingController, type GatingController } from './gating/gating.js';
+import { createMotionDetector } from './gating/motion.js';
+import { createVad } from './gating/vad.js';
+import { loadGatingConfig } from './gating/config.js';
 
 /** buildApp 选项 */
 export interface BuildAppOptions {
@@ -47,6 +52,38 @@ export interface BuildAppOptions {
    * server.ts 需在源非空时自动启动，故由其构造同一实例注入进来。
    */
   captureGateway?: CaptureGatewayHolder;
+  /**
+   * 注入的门控协调器，缺省基于 loadGatingConfig() 构造 motionDetector/vad 后组合。
+   * server.ts 需把门控接到网关 onFrame/onAudio，故由其构造同一实例注入进来。
+   */
+  gatingController?: GatingController;
+}
+
+/**
+ * 基于 loadGatingConfig() 构造一个缺省门控协调器：读取门控配置，分别建移动
+ * 侦测器与 VAD，再组合成 GatingController。供 buildApp 缺省与 server.ts 复用。
+ */
+export function createDefaultGatingController(
+  env: NodeJS.ProcessEnv = process.env,
+): GatingController {
+  const config = loadGatingConfig(env);
+  const motionDetector = createMotionDetector({
+    threshold: config.motionThreshold,
+    thumbWidth: config.motionThumbWidth,
+    thumbHeight: config.motionThumbHeight,
+    perPixelDelta: config.motionPerPixelDelta,
+    cooldownMs: config.motionCooldownMs,
+    minConsecutiveFrames: config.motionMinConsecutiveFrames,
+  });
+  const vad = createVad({
+    energyThreshold: config.vadEnergyThreshold,
+    frameMs: config.vadFrameMs,
+    triggerMs: config.vadTriggerMs,
+    hangoverMs: config.vadHangoverMs,
+    minEventMs: config.vadMinEventMs,
+    cooldownMs: config.vadCooldownMs,
+  });
+  return createGatingController({ motionDetector, vad });
 }
 
 /** 把 zod 的 issues 概要成一句可读信息 */
@@ -71,6 +108,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   // 采集网关持有者：缺省基于 loadCaptureConfig() 构造（不自动 start，由 server 决定）
   const captureGateway =
     options.captureGateway ?? createCaptureGatewayHolder(loadCaptureConfig());
+  // 门控协调器：缺省基于 loadGatingConfig() 构造检测器后组合（接线由 server 决定）
+  const gatingController =
+    options.gatingController ?? createDefaultGatingController();
 
   // CORS：开放所有来源（局域网内 PWA / 采集端访问）
   app.register(cors, { origin: true });
@@ -86,6 +126,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(voiceRoutes, { db, client: aiClient, transcriber });
   // 注入采集网关持有者注册采集路由
   app.register(captureRoutes, { gateway: captureGateway });
+  // 注入门控协调器注册门控路由
+  app.register(gatingRoutes, { controller: gatingController });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(
