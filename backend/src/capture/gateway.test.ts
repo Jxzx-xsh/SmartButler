@@ -13,7 +13,15 @@ import { createCaptureGateway } from './gateway.js';
 class FakeChild extends EventEmitter {
   stdout = Object.assign(new EventEmitter(), { resume: () => {} });
   stderr = Object.assign(new EventEmitter(), { resume: () => {} });
-  kill = vi.fn();
+  // 进程退出可观测字段：默认 null/false 与真实未退出子进程一致；
+  // kill 被调用时置 killed=true，供 stop() 的「已退出短路」判断与断言使用。
+  exitCode: number | null = null;
+  killed = false;
+  pid = 1234;
+  kill = vi.fn(() => {
+    this.killed = true;
+    return true;
+  });
 }
 
 type SpawnLike = typeof import('node:child_process').spawn;
@@ -244,7 +252,7 @@ describe('健壮性：错误与重连', () => {
 });
 
 describe('stop 生命周期', () => {
-  it('stop() 调两路 kill、等待 close 后 state 转 stopped，且不再重连', async () => {
+  it('stop() 调两路 kill 后 state 转 stopped，且不再重连', async () => {
     vi.useFakeTimers();
     const video = new FakeChild();
     const audio = new FakeChild();
@@ -263,14 +271,13 @@ describe('stop 生命周期', () => {
     expect(video.kill).toHaveBeenCalled();
     expect(audio.kill).toHaveBeenCalled();
 
-    // 两路 close 后 stop() 的 Promise 才 resolve
-    video.emit('close', 0);
-    audio.emit('close', 0);
+    // kill 投递后进程视为可结算（killed=true 短路），stop() 应及时 resolve
     await stopped;
-
     expect(gw.getStatus().state).toBe('stopped');
 
-    // 手动停止后，即便再有 close 事件也不应触发重连
+    // 迟到的 close 事件无害，且手动停止后不应触发重连
+    video.emit('close', 0);
+    audio.emit('close', 0);
     vi.advanceTimersByTime(5000);
     expect(mock).toHaveBeenCalledTimes(2);
   });
@@ -279,6 +286,98 @@ describe('stop 生命周期', () => {
     const { spawnFn } = makeSpawnFn([]);
     const gw = createCaptureGateway({ sourceUrl: 'http://x/video', spawnFn });
     await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+  });
+
+  it('stop() 在 reconnecting 状态下及时 resolve（句柄已被 killProcs 置 null、定时器待定）', async () => {
+    vi.useFakeTimers();
+    const video = new FakeChild();
+    const audio = new FakeChild();
+    const { spawnFn, mock } = makeSpawnFn([video, audio, new FakeChild(), new FakeChild()]);
+    const gw = createCaptureGateway({
+      sourceUrl: 'file:///tmp/x.mp4',
+      spawnFn,
+      reconnectDelayMs: 2000,
+      maxReconnects: 10,
+    });
+    gw.start();
+
+    // 一路 close 触发 scheduleReconnect：killProcs() 已把 videoProc/audioProc 置 null，
+    // state=reconnecting，reconnectTimer 待定（内部句柄此刻为 null）
+    video.emit('close', 1);
+    expect(gw.getStatus().state).toBe('reconnecting');
+
+    // 此时 stop()：等待集为空（句柄已 null），应在不 emit 任何新 close 的情况下立即 resolve
+    await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+
+    // 重连被打断：推进时间不再触发新的 spawn（仍为初始 2 次）
+    vi.advanceTimersByTime(10000);
+    expect(mock).toHaveBeenCalledTimes(2);
+  });
+
+  it('stop() 当子进程已 close（exitCode 非 null）时及时 resolve，不等不会到来的 close', async () => {
+    const video = new FakeChild();
+    const audio = new FakeChild();
+    const { spawnFn } = makeSpawnFn([video, audio]);
+    const gw = createCaptureGateway({ sourceUrl: 'http://x/video', spawnFn });
+    gw.start();
+
+    // 模拟句柄仍被引用但进程已退出（exitCode 非 null）
+    video.exitCode = 0;
+    audio.exitCode = 0;
+
+    // 「已退出短路」生效：不依赖 close 二次触发，直接 resolve
+    await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+  });
+
+  it('stop() 幂等：未 start 连续两次 stop 均 resolve', async () => {
+    const { spawnFn } = makeSpawnFn([]);
+    const gw = createCaptureGateway({ sourceUrl: 'http://x/video', spawnFn });
+    await gw.stop();
+    await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+  });
+
+  it('stop() 幂等：start 后 stop 两次均及时 resolve，第二次不因句柄已 null 抛错', async () => {
+    const video = new FakeChild();
+    const audio = new FakeChild();
+    const { spawnFn } = makeSpawnFn([video, audio]);
+    const gw = createCaptureGateway({ sourceUrl: 'http://x/video', spawnFn });
+    gw.start();
+
+    await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+
+    // 第二次 stop：句柄已置 null，等待集为空，立即 resolve 且状态保持 stopped
+    await gw.stop();
+    expect(gw.getStatus().state).toBe('stopped');
+  });
+
+  it('stop() 超时兜底：子进程永不发 close，推进 STOP_KILL_TIMEOUT_MS 后仍能 resolve', async () => {
+    vi.useFakeTimers();
+    // 子进程永不退出：kill 被 mock 覆盖为不置 killed，exitCode 保持 null、从不 emit close
+    const video = new FakeChild();
+    const audio = new FakeChild();
+    video.kill = vi.fn(() => true);
+    audio.kill = vi.fn(() => true);
+    const { spawnFn } = makeSpawnFn([video, audio]);
+    const gw = createCaptureGateway({ sourceUrl: 'http://x/video', spawnFn });
+    gw.start();
+
+    const stopped = gw.stop();
+    // 尚未超时、也无 close：Promise 仍 pending（用竞速标记验证）
+    let resolved = false;
+    void stopped.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // 推进到兜底超时（源常量 STOP_KILL_TIMEOUT_MS = 2000ms）→ 强制结算并 resolve
+    vi.advanceTimersByTime(2000);
+    await stopped;
     expect(gw.getStatus().state).toBe('stopped');
   });
 });

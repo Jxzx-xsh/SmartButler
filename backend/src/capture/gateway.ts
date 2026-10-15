@@ -29,6 +29,12 @@ const JPEG_SOI_1 = 0xd8;
 const JPEG_EOI_0 = 0xff;
 const JPEG_EOI_1 = 0xd9;
 
+/**
+ * stop() kill 子进程后，等待其 'close' 事件的最大毫秒数；到时强制结算该进程。
+ * 兜底防止子进程因故永不触发 'close' 导致 stop() 永不 resolve、/api/capture/stop 挂起。
+ */
+const STOP_KILL_TIMEOUT_MS = 2000;
+
 /** 网关运行状态机。 */
 export type CaptureState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'stopped';
 
@@ -322,24 +328,55 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
     spawnBoth();
   }
 
+  /**
+   * 停止采集。无论网关当前处于何种状态（idle/connecting/connected/reconnecting/stopped）
+   * 都保证在有限时间内 resolve，使 /api/capture/stop 绝不挂起。
+   *
+   * 健壮性要点：
+   * - 先置 manualStop/running、清 reconnectTimer，确保此后任何 close/error 不再触发重连，
+   *   也打断 reconnecting 周期（无论定时器待定还是已达上限）。
+   * - 快照两路句柄后立即置 null，避免后续路径再引用已被接管的进程。
+   * - 对「已退出」(exitCode !== null) 或「kill 已投递」(killed === true) 的进程直接短路，
+   *   不再等待可能已经发生、不会再次触发的一次性 'close' 事件（修复主挂起 bug）。
+   * - 对仍需等待的进程，用「'close' 事件 或 STOP_KILL_TIMEOUT_MS 超时」二选一结算，
+   *   per-proc settled 标志防重复计数，所有进程结算后统一 finish()。
+   * - 幂等：重复调用 / 未 start 直接 stop / reconnecting 中途 stop，等待集均为空或可结算，必然 resolve。
+   */
   function stop(): Promise<void> {
     // 置手动停止标志，使后续 close/error 不再触发重连
     manualStop = true;
     running = false;
 
-    // 清除待定重连定时器，避免重连竞态
+    // 清除待定重连定时器，避免重连竞态并打断重连循环
     if (reconnectTimer !== null) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
     }
 
-    // 收集仍存活的进程，等待它们 close 后再 resolve，避免僵尸进程
+    // 快照两路句柄后立即置 null：后续任何路径都不再引用这两个进程
+    const snapshot = [videoProc, audioProc];
+    videoProc = null;
+    audioProc = null;
+
+    // 仅收集「仍存活、需等待退出」的进程：
+    // 为 null、已退出(exitCode 非 null)或 kill 已投递(killed) 的进程无需等待（已结算短路）。
     const procs: ChildProc[] = [];
-    if (videoProc !== null) {
-      procs.push(videoProc);
-    }
-    if (audioProc !== null) {
-      procs.push(audioProc);
+    for (const proc of snapshot) {
+      if (proc === null) {
+        continue;
+      }
+      // kill 两路（先 SIGTERM，兜底 SIGKILL）；已退出的进程 kill 为无害 no-op
+      try {
+        proc.kill('SIGTERM');
+        proc.kill('SIGKILL');
+      } catch {
+        // 进程可能已退出，kill 抛错无需处理
+      }
+      // kill 后再判断：若此刻已退出或 kill 已投递，则不等待其 'close'（避免等不到的一次性事件）
+      if (proc.exitCode !== null || proc.killed === true) {
+        continue;
+      }
+      procs.push(proc);
     }
 
     return new Promise<void>((resolve) => {
@@ -348,6 +385,7 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
         resolve();
       };
 
+      // 等待集为空（无存活进程 / 均已退出 / 幂等重复调用）→ 立即 resolve
       if (procs.length === 0) {
         finish();
         return;
@@ -355,22 +393,38 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
 
       let remaining = procs.length;
       for (const proc of procs) {
-        // 每个进程 close 后计数归零再 resolve；'close' 为一次性语义即可
-        proc.once('close', () => {
+        // 每个进程以「close 或 超时」二选一结算，settled 防止二者都触发时重复计数
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const onClose = (): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timer !== null) {
+            clearTimeout(timer);
+            timer = null;
+          }
           remaining -= 1;
           if (remaining === 0) {
             finish();
           }
-        });
-        try {
-          proc.kill('SIGTERM');
-          proc.kill('SIGKILL');
-        } catch {
-          // 已退出的进程 kill 抛错无需处理
-        }
+        };
+        proc.once('close', onClose);
+        // 兜底超时：即便进程永不触发 'close'，到时也强制结算该进程
+        timer = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          timer = null;
+          proc.removeListener('close', onClose);
+          remaining -= 1;
+          if (remaining === 0) {
+            finish();
+          }
+        }, STOP_KILL_TIMEOUT_MS);
       }
-      videoProc = null;
-      audioProc = null;
     });
   }
 
