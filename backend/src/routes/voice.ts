@@ -23,7 +23,8 @@ import type { AiQueue } from '../ai/queue.js';
 import { LmStudioError } from '../ai/errors.js';
 import { createItemParser, type ParsedItem } from '../ai/item-parser.js';
 import { normalizeAudio } from '../ai/audio.js';
-import { createItem, listCategories, type CreateItemInput } from '../db/repository.js';
+import { createItem, type CreateItemInput } from '../db/repository.js';
+import { categoryKey, buildCategoryIdMap } from '../db/category-map.js';
 import type { Item } from '../db/schema.js';
 import { ingestTextBodySchema } from '../http/schemas.js';
 
@@ -41,14 +42,6 @@ export interface VoiceRoutesOptions extends FastifyPluginOptions {
 
 /** 单个 ffmpeg 可接受音频的最大体积：25MB（与 app.ts 注册的上限保持一致语义）。 */
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
-
-/**
- * 把分类名归一化为用于匹配的 key：去首尾空白 + 转小写。
- * 用于把模型返回的分类名宽松匹配到已有分类（大小写不敏感）。
- */
-function categoryKey(name: string): string {
-  return name.trim().toLowerCase();
-}
 
 /** 注册语音入库路由。 */
 export async function voiceRoutes(
@@ -70,10 +63,7 @@ export async function voiceRoutes(
    */
   function persistParsedItems(parsed: ParsedItem[]): Item[] {
     // 建分类名 → id 映射（宽松匹配）
-    const categoryIdByKey = new Map<string, number>();
-    for (const cat of listCategories(db)) {
-      categoryIdByKey.set(categoryKey(cat.name), cat.id);
-    }
+    const categoryIdByKey = buildCategoryIdMap(db);
 
     const created: Item[] = [];
     for (const p of parsed) {

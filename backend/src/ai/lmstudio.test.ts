@@ -209,6 +209,53 @@ describe('chatVision', () => {
   });
 });
 
+describe('chatVisionJson', () => {
+  it('正常 JSON 文本解析成功', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '{"items":[{"name":"牛奶"}]}' } }],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatVisionJson<{ items: Array<{ name: string }> }>({
+      prompt: '识别物品',
+      images: ['data:image/jpeg;base64,AAA'],
+    });
+    expect(out).toEqual({ items: [{ name: '牛奶' }] });
+  });
+
+  it('容错解析：带 ```json 围栏 + 前后缀文字时仍能解析', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [
+        { message: { content: '识别结果如下：\n```json\n{"items":[{"name":"鸡蛋"}]}\n``` 完毕。' } },
+      ],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatVisionJson<{ items: Array<{ name: string }> }>({
+      prompt: '识别物品',
+      images: ['data:image/jpeg;base64,AAA'],
+    });
+    expect(out).toEqual({ items: [{ name: '鸡蛋' }] });
+  });
+
+  it('非 JSON/坏文本抛 bad_response', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: '没有可识别的物品' } }],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    await expect(
+      client.chatVisionJson({ prompt: '识别物品', images: ['data:image/jpeg;base64,AAA'] }),
+    ).rejects.toMatchObject({
+      name: 'LmStudioError',
+      kind: 'bad_response',
+    });
+  });
+});
+
 describe('embed', () => {
   it('string 入参归一化为数组并返回 number[][]', async () => {
     const embeddingsCreate = vi.fn().mockResolvedValue({

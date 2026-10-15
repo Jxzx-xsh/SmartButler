@@ -66,6 +66,8 @@ export interface LmStudioClient {
   chatTextJson<T = unknown>(opts: ChatTextOptions): Promise<T>;
   /** 多模态对话（文本 + 图片），返回文本 */
   chatVision(opts: ChatVisionOptions): Promise<string>;
+  /** 多模态对话并解析为 JSON（复用 extractJson 容错解析），解析失败抛 bad_response */
+  chatVisionJson<T = unknown>(opts: ChatVisionOptions): Promise<T>;
   /** 文本嵌入，始终返回 number[][]（单条也包成一维数组的数组） */
   embed(opts: EmbedOptions): Promise<number[][]>;
   /** 列出可用模型 id */
@@ -301,6 +303,17 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
+  async function chatVisionJson<T = unknown>(opts: ChatVisionOptions): Promise<T> {
+    // 复用 chatVision 取文本，再经同一闭包内 extractJson 容错剥壳后 JSON.parse，
+    // 失败按 bad_response 处理（与 chatTextJson 行为一致）。
+    const text = await chatVision(opts);
+    try {
+      return JSON.parse(extractJson(text)) as T;
+    } catch (err) {
+      throw new LmStudioError('LM Studio 视觉返回的 JSON 解析失败', 'bad_response', err);
+    }
+  }
+
   async function embed(opts: EmbedOptions): Promise<number[][]> {
     try {
       // string 入参归一化为数组
@@ -342,5 +355,5 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
-  return { chatText, chatTextJson, chatVision, embed, listModels };
+  return { chatText, chatTextJson, chatVision, chatVisionJson, embed, listModels };
 }
