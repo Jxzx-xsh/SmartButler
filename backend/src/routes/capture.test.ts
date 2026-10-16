@@ -1,6 +1,7 @@
 /** 采集网关路由集成测试（Fastify inject + 注入 mock 网关持有者） */
 
 import { EventEmitter } from 'node:events';
+import http from 'node:http';
 import type { spawn } from 'node:child_process';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,10 @@ import { initSchema } from '../db/init.js';
 import { buildApp } from '../app.js';
 import type { CaptureStatus } from '../capture/gateway.js';
 import { createCaptureGatewayHolder, type CaptureGatewayHolder } from './capture.js';
+import type {
+  FrameBroadcaster,
+  FrameListener,
+} from '../capture/frame-broadcaster.js';
 
 let app: FastifyInstance;
 let db: AppDatabase;
@@ -170,6 +175,200 @@ describe('GET /api/capture/snapshot', () => {
     const res = await app.inject({ method: 'GET', url: '/api/capture/snapshot' });
     expect(res.statusCode).toBe(503);
     expect(res.json().error.code).toBe('NO_FRAME');
+  });
+});
+
+describe('GET /api/capture/stream', () => {
+  /**
+   * 构造一个记录型 mock 广播器：记录 addListener 的 cb、removeListener 调用，
+   * 并维护真实的订阅数组（支持 publish 下发与 listenerCount 查询）。
+   */
+  function makeMockBroadcaster(): FrameBroadcaster & {
+    listeners: FrameListener[];
+  } {
+    const listeners: FrameListener[] = [];
+    return {
+      listeners,
+      publish(buffer: Buffer, timestamp: number): void {
+        for (const cb of [...listeners]) {
+          cb(buffer, timestamp);
+        }
+      },
+      addListener: vi.fn((cb: FrameListener): (() => void) => {
+        listeners.push(cb);
+        return () => {
+          const i = listeners.indexOf(cb);
+          if (i !== -1) listeners.splice(i, 1);
+        };
+      }),
+      removeListener: vi.fn((cb: FrameListener): void => {
+        const i = listeners.indexOf(cb);
+        if (i !== -1) listeners.splice(i, 1);
+      }),
+      listenerCount: (): number => listeners.length,
+    };
+  }
+
+  /** 一个最小完整 JPEG 帧（SOI..EOI）。 */
+  const JPEG = Buffer.from([0xff, 0xd8, 0x12, 0x34, 0xff, 0xd9]);
+
+  /**
+   * 启动真实监听（stream 是 hijack 持久响应，inject 不适用——它要等响应结束才
+   * 结算，而本端点只在连接关闭时结束，会死锁）。随机端口起 app，返回 base URL。
+   */
+  async function listen(): Promise<string> {
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const addr = app.server.address();
+    if (addr === null || typeof addr === 'string') {
+      throw new Error('无法获取监听地址');
+    }
+    return `http://127.0.0.1:${addr.port}`;
+  }
+
+  /**
+   * 发起一次 stream 请求：收集已到达的响应体字节，提供 abort 以关闭连接。
+   * resolveHead 在收到响应头后兑现，便于断言头并控制推帧时机。
+   */
+  function openStream(baseUrl: string): {
+    headers: Promise<http.IncomingHttpHeaders>;
+    statusCode: Promise<number>;
+    getChunks: () => Buffer[];
+    waitBytes: (min: number) => Promise<void>;
+    abort: () => void;
+    done: Promise<void>;
+  } {
+    const chunks: Buffer[] = [];
+    let resolveHead!: (h: http.IncomingHttpHeaders) => void;
+    let resolveStatus!: (s: number) => void;
+    let resolveDone!: () => void;
+    const headers = new Promise<http.IncomingHttpHeaders>((r) => {
+      resolveHead = r;
+    });
+    const statusCode = new Promise<number>((r) => {
+      resolveStatus = r;
+    });
+    const done = new Promise<void>((r) => {
+      resolveDone = r;
+    });
+
+    const req = http.get(`${baseUrl}/api/capture/stream`, (res) => {
+      resolveStatus(res.statusCode ?? 0);
+      resolveHead(res.headers);
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('close', () => resolveDone());
+      res.on('end', () => resolveDone());
+    });
+    req.on('error', () => resolveDone());
+
+    const totalBytes = (): number =>
+      chunks.reduce((sum, c) => sum + c.length, 0);
+
+    return {
+      headers,
+      statusCode,
+      getChunks: () => chunks,
+      async waitBytes(min: number): Promise<void> {
+        await vi.waitFor(() => expect(totalBytes()).toBeGreaterThanOrEqual(min));
+      },
+      abort: () => req.destroy(),
+      done,
+    };
+  }
+
+  it('响应头含 multipart/x-mixed-replace; boundary=frame', async () => {
+    const broadcaster = makeMockBroadcaster();
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway, frameBroadcaster: broadcaster });
+    await app.ready();
+    const baseUrl = await listen();
+
+    const stream = openStream(baseUrl);
+    const headers = await stream.headers;
+    expect(headers['content-type']).toBe(
+      'multipart/x-mixed-replace; boundary=frame',
+    );
+
+    stream.abort();
+    await stream.done;
+  });
+
+  it('推一帧后 payload 含 --frame 边界、image/jpeg、Content-Length 与帧字节', async () => {
+    const broadcaster = makeMockBroadcaster();
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway, frameBroadcaster: broadcaster });
+    await app.ready();
+    const baseUrl = await listen();
+
+    const stream = openStream(baseUrl);
+    await stream.headers;
+    // 等订阅建立后推一帧
+    await vi.waitFor(() => expect(broadcaster.listeners.length).toBe(1));
+    broadcaster.publish(JPEG, 1);
+    await stream.waitBytes(JPEG.length + 10);
+
+    const payload = Buffer.concat(stream.getChunks());
+    expect(payload.includes(Buffer.from('--frame'))).toBe(true);
+    expect(payload.includes(Buffer.from('Content-Type: image/jpeg'))).toBe(true);
+    expect(
+      payload.includes(Buffer.from(`Content-Length: ${JPEG.length}`)),
+    ).toBe(true);
+    expect(payload.includes(JPEG)).toBe(true);
+
+    stream.abort();
+    await stream.done;
+  });
+
+  it('getLatestFrame 非 null 时首帧立即下发', async () => {
+    const latest = Buffer.from([0xff, 0xd8, 0xaa, 0xbb, 0xff, 0xd9]);
+    const broadcaster = makeMockBroadcaster();
+    const gateway = makeMockGateway({
+      getLatestFrame: vi.fn().mockReturnValue(latest),
+    });
+    app = buildApp({ db, captureGateway: gateway, frameBroadcaster: broadcaster });
+    await app.ready();
+    const baseUrl = await listen();
+
+    // 不推新帧：首帧应在订阅前立即写出
+    const stream = openStream(baseUrl);
+    await stream.headers;
+    await stream.waitBytes(latest.length + 10);
+
+    const payload = Buffer.concat(stream.getChunks());
+    expect(payload.includes(latest)).toBe(true);
+    expect(payload.includes(Buffer.from('--frame'))).toBe(true);
+
+    stream.abort();
+    await stream.done;
+  });
+
+  it('连接关闭后订阅被清理、listenerCount 归零', async () => {
+    const broadcaster = makeMockBroadcaster();
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway, frameBroadcaster: broadcaster });
+    await app.ready();
+    const baseUrl = await listen();
+
+    const stream = openStream(baseUrl);
+    await stream.headers;
+    await vi.waitFor(() => expect(broadcaster.listeners.length).toBe(1));
+
+    // 客户端断开 → 服务端 request 'close' → cleanup 退订
+    stream.abort();
+    await stream.done;
+    // cleanup 走 addListener 返回的退订函数 off()，listenerCount 归零即证明无泄漏
+    await vi.waitFor(() => expect(broadcaster.listenerCount()).toBe(0));
+  });
+
+  it('未注入广播器且无最新帧时返回 503 NO_STREAM', async () => {
+    const gateway = makeMockGateway({
+      getLatestFrame: vi.fn().mockReturnValue(null),
+    });
+    app = buildApp({ db, captureGateway: gateway });
+    await app.ready();
+
+    const res = await app.inject({ method: 'GET', url: '/api/capture/stream' });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('NO_STREAM');
   });
 });
 

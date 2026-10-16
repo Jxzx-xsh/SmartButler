@@ -13,6 +13,7 @@ import { initSchema } from './db/init.js';
 import { createAiQueue } from './ai/queue.js';
 import { createCaptureGatewayHolder } from './routes/capture.js';
 import { loadCaptureConfig } from './capture/config.js';
+import { createFrameBroadcaster } from './capture/frame-broadcaster.js';
 import { eventLogs } from './db/schema.js';
 import { createLmStudioClient } from './ai/lmstudio.js';
 import { createVisionParser } from './ai/vision-parser.js';
@@ -107,17 +108,29 @@ async function start(): Promise<void> {
     }
   });
 
-  // 采集网关持有者：把门控 processFrame/processAudio 作为 onFrame/onAudio 注入
-  // baseOptions。经 FEAT-002 的回调透传，setSource 重建底层网关后仍生效。
+  // 帧广播器：作为网关唯一 onFrame 的落点，再 fan-out 给门控与 stream 订阅者。
+  const broadcaster = createFrameBroadcaster();
+
+  // 采集网关持有者：把门控 processFrame + 广播器 publish 作为 onFrame 注入
+  // baseOptions（先门控后广播，保证门控仍收到每帧且行为零变化）；onAudio 保持
+  // 原样直连门控。经 FEAT-002 的回调透传，setSource 重建底层网关后仍生效。
   const captureConfig = loadCaptureConfig();
   const captureGateway = createCaptureGatewayHolder({
     ...captureConfig,
-    onFrame: (buffer, timestamp) => gatingController.processFrame(buffer, timestamp),
+    onFrame: (buffer, timestamp) => {
+      gatingController.processFrame(buffer, timestamp);
+      broadcaster.publish(buffer, timestamp);
+    },
     onAudio: (pcmChunk, timestamp) => gatingController.processAudio(pcmChunk, timestamp),
   });
 
-  // 同一门控实例 + 视觉入库管线注入 app（供路由/状态读取与接线）
-  const app = buildApp({ captureGateway, gatingController, visionIngest });
+  // 同一门控实例 + 视觉入库管线 + 帧广播器注入 app（供路由/状态读取与接线）
+  const app = buildApp({
+    captureGateway,
+    gatingController,
+    visionIngest,
+    frameBroadcaster: broadcaster,
+  });
 
   // 启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
   aiQueue.start();

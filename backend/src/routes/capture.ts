@@ -23,6 +23,7 @@ import {
   type CaptureGateway,
   type CaptureGatewayOptions,
 } from '../capture/gateway.js';
+import type { FrameBroadcaster } from '../capture/frame-broadcaster.js';
 
 /**
  * 网关持有者：在 CaptureGateway 之上增加 setSource，用于运行时切换采集源。
@@ -81,9 +82,14 @@ export function createCaptureGatewayHolder(
   };
 }
 
-/** 路由插件 opts：注入网关持有者。 */
+/** 路由插件 opts：注入网关持有者；可选注入帧广播器供 stream 端点订阅。 */
 export interface CaptureRoutesOptions extends FastifyPluginOptions {
   gateway: CaptureGatewayHolder;
+  /**
+   * 可选帧广播器：存在时 GET /api/capture/stream 订阅它持续下发 MJPEG 帧；
+   * 缺省（未接线/测试不关心 stream）则该端点仅能下发最新帧，无最新帧返回 503。
+   */
+  broadcaster?: FrameBroadcaster;
 }
 
 /** POST /api/capture/start 请求体校验：url 必填且为合法 URL，fps 可选正数。 */
@@ -99,7 +105,7 @@ export async function captureRoutes(
   app: FastifyInstance,
   opts: CaptureRoutesOptions,
 ): Promise<void> {
-  const { gateway } = opts;
+  const { gateway, broadcaster } = opts;
 
   // GET /api/capture/status — 当前状态 + 是否已配置源（sourceUrl 非空）
   app.get('/api/capture/status', async () => {
@@ -131,5 +137,71 @@ export async function captureRoutes(
       });
     }
     return reply.type('image/jpeg').send(frame);
+  });
+
+  // GET /api/capture/stream — MJPEG multipart/x-mixed-replace 持续推流。
+  //
+  // 用 reply.hijack() 接管底层 reply.raw：Fastify 不再自动结束响应，由本处理器
+  // 手动写头、逐帧写出、并在连接关闭时清理订阅与结束响应。帧源来自注入的
+  // broadcaster；未注入时退化为「仅下发一次最新帧」，若连最新帧都没有则 503。
+  app.get('/api/capture/stream', async (request, reply) => {
+    const latest = gateway.getLatestFrame();
+    // 既无广播器又无最新帧：无内容可推，直接 503（走 Fastify 正常响应，不 hijack）
+    if (!broadcaster && latest === null) {
+      return reply.code(503).send({
+        error: { message: '暂无可用流', code: 'NO_STREAM' },
+      });
+    }
+
+    // 接管底层响应：Fastify 不再负责结束，生命周期由本处理器掌控
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+      'Cache-Control': 'no-cache',
+      Connection: 'close',
+    });
+    // 立即把响应头刷到 socket：让客户端尽快感知流已建立，不必等第一帧
+    res.flushHeaders();
+
+    /** 写出单帧为一段 multipart 片段；响应已结束则跳过（防写已关闭的流）。 */
+    const writeFrame = (buf: Buffer): void => {
+      if (res.writableEnded) {
+        return;
+      }
+      res.write(
+        `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buf.length}\r\n\r\n`,
+      );
+      res.write(buf);
+      res.write('\r\n');
+    };
+
+    // 有最新帧先立即下发首帧，避免订阅者等到下一帧才见到画面
+    if (latest !== null) {
+      writeFrame(latest);
+    }
+
+    // 订阅广播器：后续每帧写出；缺省无广播器则只有上面的首帧
+    const off = broadcaster
+      ? broadcaster.addListener((buf) => writeFrame(buf))
+      : null;
+
+    // 连接关闭清理：closed 标志防重复，退订（若订阅过）并结束响应，杜绝泄漏/挂起
+    let closed = false;
+    const cleanup = (): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (off) {
+        off();
+      }
+      if (!res.writableEnded) {
+        res.end();
+      }
+    };
+    // 客户端断开或底层响应关闭都触发清理（对齐 Task6 stop 修复：不留挂起订阅）
+    request.raw.on('close', cleanup);
+    res.on('close', cleanup);
   });
 }

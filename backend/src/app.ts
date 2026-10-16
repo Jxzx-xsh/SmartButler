@@ -27,6 +27,7 @@ import { aiRoutes } from './routes/ai.js';
 import { voiceRoutes } from './routes/voice.js';
 import { visionRoutes } from './routes/vision.js';
 import type { VisionIngest } from './capture/vision-ingest.js';
+import type { FrameBroadcaster } from './capture/frame-broadcaster.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
 import {
@@ -64,6 +65,11 @@ export interface BuildAppOptions {
    * （同步直调识别器，不走队列）。server.ts 走 deferred 队列，故由其构造注入。
    */
   visionIngest?: VisionIngest;
+  /**
+   * 注入的帧广播器，供 GET /api/capture/stream 订阅下发 MJPEG 帧。缺省不注入
+   * （stream 端点退化为仅下发最新帧）；server.ts 构造真实实例并接到网关 onFrame。
+   */
+  frameBroadcaster?: FrameBroadcaster;
 }
 
 /**
@@ -137,8 +143,13 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     client: aiClient,
     ...(options.visionIngest ? { visionIngest: options.visionIngest } : {}),
   });
-  // 注入采集网关持有者注册采集路由
-  app.register(captureRoutes, { gateway: captureGateway });
+  // 注入采集网关持有者注册采集路由（存在帧广播器才条件透传，沿用 visionIngest 写法）
+  app.register(captureRoutes, {
+    gateway: captureGateway,
+    ...(options.frameBroadcaster
+      ? { broadcaster: options.frameBroadcaster }
+      : {}),
+  });
   // 注入门控协调器注册门控路由
   app.register(gatingRoutes, { controller: gatingController });
 
