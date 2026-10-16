@@ -25,6 +25,8 @@ import { itemsRoutes } from './routes/items.js';
 import { categoriesRoutes } from './routes/categories.js';
 import { aiRoutes } from './routes/ai.js';
 import { voiceRoutes } from './routes/voice.js';
+import { visionRoutes } from './routes/vision.js';
+import type { VisionIngest } from './capture/vision-ingest.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
 import {
@@ -57,6 +59,11 @@ export interface BuildAppOptions {
    * server.ts 需把门控接到网关 onFrame/onAudio，故由其构造同一实例注入进来。
    */
   gatingController?: GatingController;
+  /**
+   * 注入的视觉入库管线，供测试直接注入 mock；缺省时由 vision 路由现场构造
+   * （同步直调识别器，不走队列）。server.ts 走 deferred 队列，故由其构造注入。
+   */
+  visionIngest?: VisionIngest;
 }
 
 /**
@@ -124,6 +131,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(aiRoutes, { client: aiClient });
   // 注入 db + LM Studio 客户端 + whisper 转写器注册语音入库路由
   app.register(voiceRoutes, { db, client: aiClient, transcriber });
+  // 注入 db + LM Studio 客户端注册视觉入库路由（可注入 visionIngest 便于测试/接线）
+  app.register(visionRoutes, {
+    db,
+    client: aiClient,
+    ...(options.visionIngest ? { visionIngest: options.visionIngest } : {}),
+  });
   // 注入采集网关持有者注册采集路由
   app.register(captureRoutes, { gateway: captureGateway });
   // 注入门控协调器注册门控路由

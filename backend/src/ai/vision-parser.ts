@@ -49,6 +49,7 @@ export interface VisionParser {
 function buildSystemPrompt(ctx: { date: string; weekday: string }): string {
   return [
     '你是一个家庭物品识别助手。请识别图片画面中出现的食材、食品与日用品，解析为结构化的物品清单。',
+    '识别来源既包括画面中的【实物】（如冰箱里的牛奶盒、桌上的水果），也包括画面中清晰可见的【物品名称文字】——例如包装/标签上印的品名、购物小票或清单上列出的物品。只要能从画面中确定一件家庭物品，就把它列入清单；不要因为"只是文字而非实物"而忽略它。',
     '',
     `当前日期：${ctx.date}（${ctx.weekday}），时区按 Asia/Shanghai 理解。`,
     '',

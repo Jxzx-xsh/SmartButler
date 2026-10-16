@@ -14,6 +14,9 @@ import { createAiQueue } from './ai/queue.js';
 import { createCaptureGatewayHolder } from './routes/capture.js';
 import { loadCaptureConfig } from './capture/config.js';
 import { eventLogs } from './db/schema.js';
+import { createLmStudioClient } from './ai/lmstudio.js';
+import { createVisionParser } from './ai/vision-parser.js';
+import { createVisionIngest } from './capture/vision-ingest.js';
 
 /** 启动服务器 */
 async function start(): Promise<void> {
@@ -23,9 +26,20 @@ async function start(): Promise<void> {
   // 门控协调器：先构造，再把其 processFrame/processAudio 接到网关回调。
   const gatingController = createDefaultGatingController();
 
-  // 订阅门控事件：目前只做可观测（日志 + 可选落库 eventLogs source='gating'），
-  // 不强制接 AI 队列（留给上层 Task8/Task5 消费）。落库失败吞掉不影响主流程，
-  // 容错写法对齐 src/ai/queue.ts 的 emit()。
+  // AI 任务队列（空闲批处理定时器）：供视觉识别走 enqueueDeferred 延后批处理。
+  // 先构造以便视觉入库管线复用，start/stop 在 app 构建后挂到 onClose。
+  const aiQueue = createAiQueue({ db });
+
+  // 视觉入库管线：同一 db + 一个 LM Studio 客户端 + aiQueue 构造识别器。
+  // 识别任务经 visionParser 内部的 enqueueDeferred 串行化、空闲批处理，不阻塞门控/网关。
+  const visionParser = createVisionParser({
+    client: createLmStudioClient(),
+    queue: aiQueue,
+  });
+  const visionIngest = createVisionIngest({ db, visionParser });
+
+  // 订阅门控事件：可观测（日志 + 落库 eventLogs source='gating'），落库失败吞掉不影响主流程，
+  // 容错写法对齐 src/ai/queue.ts 的 emit()。此外把运动帧接到视觉入库管线（容错、不阻塞门控）。
   gatingController.onVideoMotion((event) => {
     console.log(
       `[gating] 运动事件 ts=${event.timestamp} changedRatio=${event.changedRatio.toFixed(3)}`,
@@ -44,6 +58,32 @@ async function start(): Promise<void> {
     } catch {
       // 事件日志落库失败不影响主流程
     }
+
+    // 把触发帧接到视觉入库管线：异步容错，绝不 throw 回门控链、不阻塞门控/网关。
+    // 识别经 aiQueue.enqueueDeferred（在 visionParser 内部）串行化、空闲批处理。
+    visionIngest
+      .ingestFrame(event.frame, event.timestamp)
+      .then((items) => {
+        if (items.length > 0) {
+          console.log(`[vision] 识别入库 ${items.length} 项`);
+        }
+      })
+      .catch((err) => {
+        console.error('[vision] 识别入库失败（不影响门控）：', err);
+        try {
+          db.insert(eventLogs)
+            .values({
+              eventType: 'vision_error',
+              payload: JSON.stringify({
+                message: err instanceof Error ? err.message : String(err),
+              }),
+              source: 'vision',
+            })
+            .run();
+        } catch {
+          // 事件日志落库失败不影响主流程
+        }
+      });
   });
   gatingController.onAudioActivity((event) => {
     console.log(
@@ -76,11 +116,10 @@ async function start(): Promise<void> {
     onAudio: (pcmChunk, timestamp) => gatingController.processAudio(pcmChunk, timestamp),
   });
 
-  // 同一门控实例注入 app（供 GET /api/gating/status 读取统计）
-  const app = buildApp({ captureGateway, gatingController });
+  // 同一门控实例 + 视觉入库管线注入 app（供路由/状态读取与接线）
+  const app = buildApp({ captureGateway, gatingController, visionIngest });
 
-  // 构建并启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
-  const aiQueue = createAiQueue({ db });
+  // 启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
   aiQueue.start();
   app.addHook('onClose', async () => {
     aiQueue.stop();
