@@ -4,7 +4,8 @@
 #
 # 并行后台起后端（tsx watch）与前端（vite）dev server，二者共用本终端输出。
 # 退出时（正常退出 / Ctrl-C / 被 kill）统一清理两个子进程，保证不留僵尸进程。
-# 任一进程退出即整体收尾（wait -n），不阻塞卡死。
+# 任一进程退出即整体收尾，不阻塞卡死。
+# 注意：收尾用轮询 `kill -0` 判断子进程存活，兼容 macOS 自带 bash 3.2（`wait -n` 需 bash 4+）。
 #
 # 说明：根 package.json 的 `npm run dev` 用 concurrently 做同样的事并带前缀标签，
 # 本脚本提供纯 shell 版本（不依赖 concurrently），行为等价、更可控。
@@ -45,4 +46,12 @@ PIDS+=("$!")
 echo "[start-dev] 前后端已并行启动，按 Ctrl-C 退出。"
 
 # 阻塞直到任一子进程退出；任一退出即返回，随后 trap EXIT 统一清理另一个。
-wait -n
+# bash 3.2 不支持 `wait -n`，改为轮询两个子进程 PID：任一不再存活即收尾。
+while true; do
+  for pid in "${PIDS[@]}"; do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      break 2
+    fi
+  done
+  sleep 1
+done
