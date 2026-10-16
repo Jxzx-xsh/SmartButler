@@ -37,6 +37,10 @@ import {
 } from './routes/capture.js';
 import { loadCaptureConfig } from './capture/config.js';
 import { gatingRoutes } from './routes/gating.js';
+import { loadHaConfig } from './ha/config.js';
+import { createHaClient, type HaClient } from './ha/ha-client.js';
+import { haRoutes } from './routes/ha.js';
+import type { HaEventSubscriber } from './ha/ha-events.js';
 import { createGatingController, type GatingController } from './gating/gating.js';
 import { createMotionDetector } from './gating/motion.js';
 import { createVad } from './gating/vad.js';
@@ -79,6 +83,16 @@ export interface BuildAppOptions {
     buffer: Buffer,
     meta: { timestamp: number; mimetype?: string },
   ) => Promise<void> | void;
+  /**
+   * 注入的 HA REST 客户端，缺省基于 loadHaConfig() 现场构造（不触网）。
+   * server.ts 构造同一实例注入，供 /api/ha/* 读/控使用。
+   */
+  haClient?: HaClient;
+  /**
+   * 注入的 HA WS 事件订阅器，缺省不注入（/api/ha/status 的 connected 退化为 false）。
+   * server.ts 仅在 HA 已配置时构造并注入，供状态端点读取连接态。
+   */
+  haSubscriber?: HaEventSubscriber;
 }
 
 /**
@@ -162,6 +176,16 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
   // 注入门控协调器注册门控路由
   app.register(gatingRoutes, { controller: gatingController });
+  // HA 集成路由：读配置 + 缺省现场构造 client（不触网），路由内部按 isHaConfigured 降级；
+  // 未配置 HA 也注册（端点自行 503/降级），存在 subscriber 才条件透传（沿用上面写法）
+  const haConfig = loadHaConfig();
+  const haClient = options.haClient ?? createHaClient({ config: haConfig });
+  app.register(haRoutes, {
+    client: haClient,
+    db,
+    config: haConfig,
+    ...(options.haSubscriber ? { subscriber: options.haSubscriber } : {}),
+  });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(

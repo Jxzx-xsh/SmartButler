@@ -21,6 +21,9 @@ import { eventLogs } from './db/schema.js';
 import { createLmStudioClient } from './ai/lmstudio.js';
 import { createVisionParser } from './ai/vision-parser.js';
 import { createVisionIngest } from './capture/vision-ingest.js';
+import { loadHaConfig, isHaConfigured } from './ha/config.js';
+import { createHaClient } from './ha/ha-client.js';
+import { createHaEventSubscriber, type HaEventSubscriber } from './ha/ha-events.js';
 
 /**
  * 由上传 mimetype 粗略推断音频扩展名（仅用于临时文件命名，非严谨解析）。
@@ -187,14 +190,54 @@ async function start(): Promise<void> {
     }
   };
 
-  // 同一门控实例 + 视觉入库管线 + 帧广播器 + 通话留存回调注入 app（供路由/状态读取与接线）
+  // HA 集成：构造真实 REST 客户端注入 app（路由内部按 isHaConfigured 降级）。
+  // 仅在 HA 已配置时才容错拉起 WS 事件订阅——事件落 eventLogs(source='ha')，
+  // payload 仅记非敏感字段（entity_id），绝不含令牌。
+  const haConfig = loadHaConfig();
+  const haClient = createHaClient({ config: haConfig });
+  let haSubscriber: HaEventSubscriber | undefined;
+  if (isHaConfigured(haConfig)) {
+    haSubscriber = createHaEventSubscriber({
+      config: haConfig,
+      handlers: {
+        onStateChanged: (event) => {
+          try {
+            db.insert(eventLogs)
+              .values({
+                eventType: 'ha_state_changed',
+                // 仅记非敏感字段，绝不含令牌
+                payload: JSON.stringify({ entity_id: event.entity_id }),
+                source: 'ha',
+              })
+              .run();
+          } catch {
+            // 事件日志落库失败不影响主流程
+          }
+        },
+        onError: (err) => console.error('[ha] WS 错误（不影响后端）：', err.message),
+      },
+    });
+  }
+
+  // 同一门控实例 + 视觉入库管线 + 帧广播器 + 通话留存回调 + HA 客户端/订阅器
+  // 注入 app（供路由/状态读取与接线）
   const app = buildApp({
     captureGateway,
     gatingController,
     visionIngest,
     frameBroadcaster: broadcaster,
     talkSink,
+    haClient,
+    ...(haSubscriber ? { haSubscriber } : {}),
   });
+
+  // HA WS 订阅器进程关闭时停止（可靠 resolve 不挂起）
+  if (haSubscriber) {
+    const sub = haSubscriber;
+    app.addHook('onClose', async () => {
+      await sub.stop();
+    });
+  }
 
   // 启动 AI 任务队列（空闲批处理定时器），进程关闭时停止
   aiQueue.start();
@@ -212,6 +255,17 @@ async function start(): Promise<void> {
 
   await app.listen({ port, host });
   console.log(`[server] SmartButler 后端已启动：http://${host}:${port}`);
+
+  // HA 已配置才容错拉起 WS 订阅：连不上只记日志，绝不阻塞/中断后端启动（对齐采集网关）
+  if (haSubscriber) {
+    const sub = haSubscriber;
+    try {
+      sub.start();
+      console.log('[ha] WS 事件订阅已启动');
+    } catch (err) {
+      console.error('[ha] WS 订阅启动失败（后端继续运行）：', err);
+    }
+  }
 
   // 配置了采集源才自动启动；启动失败只记日志，绝不阻塞/中断后端进程
   if (captureConfig.sourceUrl !== '') {
