@@ -97,3 +97,14 @@ export const ingestTextBodySchema = z.object({
 
 /** 解析后的文本入库请求体类型 */
 export type IngestTextBody = z.infer<typeof ingestTextBodySchema>;
+
+/** POST /api/command 请求体校验：一句中文指令 + 可选来源 */
+export const commandBodySchema = z.object({
+  /** 指令文本：去除首尾空白后不能为空 */
+  text: z.string().trim().min(1, 'text 不能为空'),
+  /** 来源：可选，语音或手动（影响 item_record 入库 source 标注） */
+  source: z.enum(['voice', 'manual']).optional(),
+});
+
+/** 解析后的指令请求体类型 */
+export type CommandBody = z.infer<typeof commandBodySchema>;

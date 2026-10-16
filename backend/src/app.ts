@@ -30,6 +30,10 @@ import type { VisionIngest } from './capture/vision-ingest.js';
 import type { FrameBroadcaster } from './capture/frame-broadcaster.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
 import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
+import { createIntentClassifier } from './ai/intent-classifier.js';
+import { createItemParser } from './ai/item-parser.js';
+import { createCommandRouter, type CommandRouter } from './commands/command-router.js';
+import { commandRoutes } from './routes/command.js';
 import {
   captureRoutes,
   createCaptureGatewayHolder,
@@ -93,6 +97,11 @@ export interface BuildAppOptions {
    * server.ts 仅在 HA 已配置时构造并注入，供状态端点读取连接态。
    */
   haSubscriber?: HaEventSubscriber;
+  /**
+   * 注入的指令路由器，缺省基于已构造的 db/aiClient/haClient/haConfig 现场构造
+   * （不走队列）。server.ts 走 aiQueue 的即时队列，故由其构造同一实例注入。
+   */
+  commandRouter?: CommandRouter;
 }
 
 /**
@@ -186,6 +195,19 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     config: haConfig,
     ...(options.haSubscriber ? { subscriber: options.haSubscriber } : {}),
   });
+
+  // 指令路由：缺省现场构造意图分类器 + 物品解析器（与 voice 一致，不走队列），
+  // 组合为 commandRouter；server.ts 走 aiQueue 的即时队列，故可注入同一实例。
+  const commandRouter =
+    options.commandRouter ??
+    createCommandRouter({
+      db,
+      classifier: createIntentClassifier({ client: aiClient }),
+      itemParser: createItemParser({ client: aiClient }),
+      haClient,
+      haConfig,
+    });
+  app.register(commandRoutes, { router: commandRouter });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(

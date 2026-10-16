@@ -20,6 +20,9 @@ import { createFrameBroadcaster } from './capture/frame-broadcaster.js';
 import { eventLogs } from './db/schema.js';
 import { createLmStudioClient } from './ai/lmstudio.js';
 import { createVisionParser } from './ai/vision-parser.js';
+import { createIntentClassifier } from './ai/intent-classifier.js';
+import { createItemParser } from './ai/item-parser.js';
+import { createCommandRouter } from './commands/command-router.js';
 import { createVisionIngest } from './capture/vision-ingest.js';
 import { loadHaConfig, isHaConfigured } from './ha/config.js';
 import { createHaClient } from './ha/ha-client.js';
@@ -195,6 +198,19 @@ async function start(): Promise<void> {
   // payload 仅记非敏感字段（entity_id），绝不含令牌。
   const haConfig = loadHaConfig();
   const haClient = createHaClient({ config: haConfig });
+
+  // 指令路由器：复用真实 haClient 与 aiQueue——意图分类器/物品解析器均走
+  // aiQueue.enqueueImmediate（即时串行提交），与 voice 的队列化策略一致，
+  // 避免与视觉识别的 deferred 任务相互阻塞。注入 buildApp 供 /api/command 使用。
+  const commandAiClient = createLmStudioClient();
+  const commandRouter = createCommandRouter({
+    db,
+    classifier: createIntentClassifier({ client: commandAiClient, queue: aiQueue }),
+    itemParser: createItemParser({ client: commandAiClient, queue: aiQueue }),
+    haClient,
+    haConfig,
+  });
+
   let haSubscriber: HaEventSubscriber | undefined;
   if (isHaConfigured(haConfig)) {
     haSubscriber = createHaEventSubscriber({
@@ -228,6 +244,7 @@ async function start(): Promise<void> {
     frameBroadcaster: broadcaster,
     talkSink,
     haClient,
+    commandRouter,
     ...(haSubscriber ? { haSubscriber } : {}),
   });
 
