@@ -308,4 +308,225 @@ describe('createCommandRouter.route', () => {
     expect(result.reason).toBe('无法连接 Home Assistant');
     expect(commandLogCount()).toBe(1);
   });
+
+  it('(j) 真机复现：target "晾衣机的灯" + friendly_name "晾衣机  灯"（两空格）→ 归一化后唯一命中执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        // 真机实体：friendly_name 含两个空格，entity_id 无语义长串
+        entity('light.hyd_cn_945476182_1s1_s_3_light', '晾衣机  灯'),
+        entity('switch.kitchen', '厨房插座'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '晾衣机的灯' },
+        rawText: '把晾衣机的灯打开',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('把晾衣机的灯打开');
+
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOn).toHaveBeenCalledWith('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOff).not.toHaveBeenCalled();
+  });
+
+  it('(k) target "晾衣机灯"（无助词无空格）同实体 → 同样唯一命中执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.hyd_cn_945476182_1s1_s_3_light', '晾衣机  灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '晾衣机灯' },
+        rawText: '开晾衣机灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开晾衣机灯');
+
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOn).toHaveBeenCalledWith('light.hyd_cn_945476182_1s1_s_3_light');
+  });
+
+  it('(l) 归一化：助词/多余空格/大小写都不影响匹配（friendly_name 含全角空格+大写）', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        // friendly_name 含全角空格 \u3000 与大写字母
+        entity('light.balcony_LED', 'LED　晾衣机的灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_off', target: 'led晾衣机灯' },
+        rawText: '关掉led晾衣机灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('关掉led晾衣机灯');
+
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.balcony_LED');
+    expect(haClient.turnOff).toHaveBeenCalledWith('light.balcony_LED');
+  });
+
+  it('(m) 归一化后多命中仍走多候选：target "客厅的 灯" 对「客厅灯主」「客厅灯侧」', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.living_room_main', '客厅灯主'),
+        entity('light.living_room_side', '客厅灯侧'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        // 含助词「的」与空格，归一化后为「客厅灯」，是两实体 friendly_name 的子串
+        slots: { action: 'turn_on', target: '客厅的 灯' },
+        rawText: '开客厅的灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开客厅的灯');
+
+    // 归一化「客厅的 灯」→「客厅灯」，第 1 级即对两实体包含命中 → 多候选
+    expect(result.executed).toBe(false);
+    expect(result.reason).toBe('匹配到多个设备');
+    expect(result.candidates).toEqual(['light.living_room_main', 'light.living_room_side']);
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(m2) 第 2 级保守性：target "客厅灯" 对「客厅主灯」「客厅台灯」→ 关键词整体不覆盖仍零命中', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.living_room_main', '客厅主灯'),
+        entity('light.living_room_lamp', '客厅台灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        // 归一化「客厅灯」在第 1 级非子串（实体是「客厅主灯」/「客厅台灯」），
+        // 第 2 级用停用词「台」切分后关键词仍需全覆盖 → 走多候选兜底
+        slots: { action: 'turn_on', target: '客厅灯' },
+        rawText: '开客厅灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开客厅灯');
+
+    // 第 1 级零命中；第 2 级关键词「客厅灯」整体不在任一实体 → 仍零命中
+    // （验证第 2 级 AND 覆盖的保守性：不会把「客厅灯」误拆成「客厅」+「灯」放大召回）
+    expect(result.executed).toBe(false);
+    expect(result.reason).toBe('未找到匹配设备');
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(n) 单字关键词护栏：target "灯" 面对多个含「灯」实体 → 不误执行单一设备（多候选）', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.a', '客厅灯'),
+        entity('light.b', '卧室灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '灯' },
+        rawText: '开灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开灯');
+
+    // 第 1 级归一化包含「灯」即多命中 → 多候选，不误执行单一设备
+    expect(result.executed).toBe(false);
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(o) 单字关键词护栏：唯一含「灯」实体但 target 为单字 → 第 1 级命中唯一则执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([entity('light.only', '客厅灯')]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '灯' },
+        rawText: '开灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开灯');
+
+    // 单字 target「灯」经第 1 级归一化包含命中唯一实体即执行（护栏仅限制第 2 级）
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.only');
+  });
+
+  it('(p) 精度边界：无关 target "卧室灯" 对只有「晾衣机  灯」的实体 → 零命中不误匹配', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.hyd_cn_945476182_1s1_s_3_light', '晾衣机  灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '卧室灯' },
+        rawText: '开卧室灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开卧室灯');
+
+    // 关键词「卧室灯」整体不是「晾衣机灯」子串，且第 2 级要求全关键词覆盖 → 零命中
+    expect(result.executed).toBe(false);
+    expect(result.reason).toBe('未找到匹配设备');
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
 });

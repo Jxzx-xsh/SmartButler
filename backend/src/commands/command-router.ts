@@ -81,11 +81,68 @@ export interface CommandRouter {
 const EXPIRING_DAYS = 3;
 
 /**
+ * 中文结构助词集合：归一化时删除这些字。
+ * 仅取最常引起 target 与 friendly_name 差异的虚词，只删虚词、不删名词用字，
+ * 避免误伤设备名（如「的灯」里的「的」应删，「灯」保留）。
+ */
+const MATCH_PARTICLES = ['的', '地', '得'] as const;
+
+/**
+ * 关键词切分停用词集合：第 2 级关键词匹配时作为切分边界并剔除。
+ * 取设备控制领域最小且明确的量词/指示代词虚词，保守集合，避免过度切碎名词。
+ */
+const MATCH_STOPWORDS = ['所有', '那个', '这个', '那', '这', '个', '只', '台', '盏'] as const;
+
+/**
+ * 归一化字符串用于匹配比较（等价归一化，不改变语义）：
+ * 1. 转小写（兼容英文 friendly_name，大小写不敏感）；
+ * 2. 去除所有空白——含半角空白与全角空格 \u3000（防某些环境 \s 不含全角空格）；
+ * 3. 删除常见中文结构助词（的/地/得）。
+ * 例：「晾衣机的灯」→「晾衣机灯」，「晾衣机  灯」→「晾衣机灯」，二者归一后一致。
+ */
+function normalizeForMatch(s: string): string {
+  let out = s.toLowerCase().replace(/[\s\u3000]+/g, '');
+  for (const p of MATCH_PARTICLES) {
+    out = out.split(p).join('');
+  }
+  return out;
+}
+
+/**
+ * 把归一化后的 target 按停用词边界切分成关键词片段（纯规则，无分词依赖）。
+ * 以停用词为分隔符切开，过滤空片段，返回保序去空的关键词数组。
+ * 例：「所有客厅灯」→（去「所有」）→「客厅灯」；「客厅那盏灯」→「客厅」「灯」。
+ */
+function splitKeywords(normalized: string): string[] {
+  let segments = [normalized];
+  for (const sw of MATCH_STOPWORDS) {
+    const next: string[] = [];
+    for (const seg of segments) {
+      for (const part of seg.split(sw)) {
+        next.push(part);
+      }
+    }
+    segments = next;
+  }
+  return segments.filter((seg) => seg !== '');
+}
+
+/**
  * 在实体状态列表中匹配目标设备，返回命中的 entity_id 列表（去重保序）。
- * - entityId 优先：精确匹配某实体的 entity_id（大小写不敏感）。
- * - 否则 target：对每个实体的 entity_id 与 attributes.friendly_name 做大小写
- *   不敏感「包含」匹配。
- * target/entityId 均缺失时返回空数组（上层据此给未找到提示）。
+ *
+ * 匹配策略（精度优先、分级降级，任一级命中即停，不混用降低精度）：
+ * - 第 0 级 entityId 精确匹配：entityId 非空时精确匹配某实体的 entity_id
+ *   （大小写不敏感），命中即返回，不进 target 分支。
+ * - 第 1 级归一化包含匹配：对 target 与 entity_id/friendly_name 做
+ *   normalizeForMatch（去空格/去助词/小写）后，做「包含」匹配。解决真机
+ *   「晾衣机的灯」vs「晾衣机  灯」这类空格/助词差异（等价归一化，零精度损失）。
+ * - 第 2 级关键词全覆盖匹配（仅第 1 级零命中时启用，补充召回）：把归一化 target
+ *   按停用词切成关键词，要求某实体 friendly_name 归一化后「包含全部关键词」
+ *   （AND 语义）才命中。护栏：单字单关键词不启用（易误中）、只比对 friendly_name
+ *   （不对无语义 entity_id 长串做关键词匹配，避免偶然子串命中）。
+ *
+ * 命中 ≥2 个时上层走多候选确认分支，绝不自行挑一个执行（控制设备有副作用，
+ * 宁可多问也不误控）。target/entityId 均缺失时返回空数组。
  */
 function matchEntities(
   states: HaEntityState[],
@@ -101,6 +158,14 @@ function matchEntities(
     }
   };
 
+  // 取某实体归一化后的 friendly_name（attributes.friendly_name 类型为 unknown，
+  // 非字符串按空串处理）。
+  const friendlyOf = (s: HaEntityState): string => {
+    const friendly = s.attributes['friendly_name'];
+    return typeof friendly === 'string' ? normalizeForMatch(friendly) : '';
+  };
+
+  // 第 0 级：entityId 精确匹配（大小写不敏感），命中即返回。
   if (entityId !== undefined && entityId.trim() !== '') {
     const needle = entityId.trim().toLowerCase();
     for (const s of states) {
@@ -111,14 +176,42 @@ function matchEntities(
     return hits;
   }
 
-  if (target !== undefined && target.trim() !== '') {
-    const needle = target.trim().toLowerCase();
+  if (target === undefined || target.trim() === '') {
+    return hits;
+  }
+
+  // 第 1 级：归一化包含匹配（friendly_name 与 entity_id 都参与）。
+  const nTarget = normalizeForMatch(target);
+  if (nTarget !== '') {
     for (const s of states) {
-      const friendly = s.attributes['friendly_name'];
-      const friendlyStr = typeof friendly === 'string' ? friendly.toLowerCase() : '';
-      if (s.entity_id.toLowerCase().includes(needle) || friendlyStr.includes(needle)) {
+      const nFriendly = friendlyOf(s);
+      const nEntityId = normalizeForMatch(s.entity_id);
+      if (nEntityId.includes(nTarget) || (nFriendly !== '' && nFriendly.includes(nTarget))) {
         add(s.entity_id);
       }
+    }
+  }
+  if (hits.length > 0) {
+    return hits;
+  }
+
+  // 第 2 级：关键词全覆盖匹配（仅 friendly_name，AND 语义，带护栏）。
+  const keywords = splitKeywords(nTarget);
+  // 护栏：单字单关键词太容易误中无关实体，不启用第 2 级，维持零命中。
+  if (keywords.length === 1 && (keywords[0] as string).length < 2) {
+    return hits;
+  }
+  if (keywords.length === 0) {
+    return hits;
+  }
+  for (const s of states) {
+    const nFriendly = friendlyOf(s);
+    if (nFriendly === '') {
+      continue;
+    }
+    // 要求全部关键词都出现在同一实体 friendly_name 中才命中。
+    if (keywords.every((kw) => nFriendly.includes(kw))) {
+      add(s.entity_id);
     }
   }
 
