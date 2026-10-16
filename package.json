@@ -1,0 +1,17 @@
+{
+  "name": "smartbutler",
+  "version": "0.1.0",
+  "description": "SmartButler 家庭智能管家 — 根级编排：一键起前后端 dev、顺序构建、数据库初始化/灌种、端到端冒烟",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n backend,pwa -c green,cyan \"npm --prefix backend run dev\" \"npm --prefix pwa run dev\"",
+    "build": "npm --prefix backend run build && npm --prefix pwa run build",
+    "db:init": "npm --prefix backend run db:init",
+    "db:seed": "npm --prefix backend run db:seed",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  }
+}

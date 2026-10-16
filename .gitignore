@@ -1,3 +1,6 @@
+# 依赖目录（根级编排，npm install 产物，不入库）
+node_modules/
+
 # 临时脚本与下载辅助（不入库）
 tmp_*.sh
 tmp_*.ts
