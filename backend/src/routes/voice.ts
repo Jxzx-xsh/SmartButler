@@ -21,11 +21,9 @@ import type { LmStudioClient } from '../ai/lmstudio.js';
 import type { WhisperTranscriber } from '../ai/whisper.js';
 import type { AiQueue } from '../ai/queue.js';
 import { LmStudioError } from '../ai/errors.js';
-import { createItemParser, type ParsedItem } from '../ai/item-parser.js';
+import { createItemParser } from '../ai/item-parser.js';
 import { normalizeAudio } from '../ai/audio.js';
-import { createItem, type CreateItemInput } from '../db/repository.js';
-import { categoryKey, buildCategoryIdMap } from '../db/category-map.js';
-import type { Item } from '../db/schema.js';
+import { persistParsedItems } from '../db/persist-items.js';
 import { ingestTextBodySchema } from '../http/schemas.js';
 
 /** 路由插件 opts：注入数据库、LM Studio 客户端、whisper 转写器与可选 AI 队列。 */
@@ -52,63 +50,12 @@ export async function voiceRoutes(
   // 构造物品解析器：queue 存在时解析任务走队列即时串行提交
   const parser = createItemParser(queue ? { client, queue } : { client });
 
-  /**
-   * 把解析出的物品数组入库，返回入库记录数组。
-   *
-   * - 取 listCategories(db) 建「分类名 key → id」映射（大小写不敏感、去空白）；
-   *   模型返回的 category 命中则带上 categoryId，匹配不到则不设（置空，不建新分类）。
-   * - source 固定为 'voice'，confirmed 为 true（语音录入默认已确认）。
-   * - 透传 quantity/unit/location/purchaseDate/shelfLifeDays/expiryDate；
-   *   createItem 在未显式给 expiryDate 时会按 purchaseDate+shelfLifeDays 自动算到期。
-   */
-  function persistParsedItems(parsed: ParsedItem[]): Item[] {
-    // 建分类名 → id 映射（宽松匹配）
-    const categoryIdByKey = buildCategoryIdMap(db);
-
-    const created: Item[] = [];
-    for (const p of parsed) {
-      const input: CreateItemInput = {
-        name: p.name,
-        source: 'voice',
-        confirmed: true,
-      };
-      if (p.quantity !== null && p.quantity !== undefined) {
-        input.quantity = p.quantity;
-      }
-      if (p.unit !== null && p.unit !== undefined) {
-        input.unit = p.unit;
-      }
-      if (p.location !== null && p.location !== undefined) {
-        input.location = p.location;
-      }
-      if (p.purchaseDate !== null && p.purchaseDate !== undefined) {
-        input.purchaseDate = p.purchaseDate;
-      }
-      if (p.shelfLifeDays !== null && p.shelfLifeDays !== undefined) {
-        input.shelfLifeDays = p.shelfLifeDays;
-      }
-      if (p.expiryDate !== null && p.expiryDate !== undefined) {
-        input.expiryDate = p.expiryDate;
-      }
-      // 分类名映射到已有分类 id；匹配不到则不设 categoryId（置空）
-      if (p.category !== null && p.category !== undefined) {
-        const id = categoryIdByKey.get(categoryKey(p.category));
-        if (id !== undefined) {
-          input.categoryId = id;
-        }
-      }
-
-      created.push(createItem(db, input));
-    }
-    return created;
-  }
-
   // POST /api/voice/ingest-text — 文本直接解析入库（可脱离 whisper 独立联调）
   app.post('/api/voice/ingest-text', async (request, reply) => {
     // body 校验失败抛 ZodError，由 app 统一错误处理转 400
     const { text } = ingestTextBodySchema.parse(request.body);
     const parsed = await parser.parse(text);
-    const items = persistParsedItems(parsed);
+    const items = persistParsedItems(db, parsed, 'voice');
     return reply.send({ transcript: text, items });
   });
 
@@ -164,7 +111,7 @@ export async function voiceRoutes(
     }
 
     const parsed = await parser.parse(transcript);
-    const items = persistParsedItems(parsed);
+    const items = persistParsedItems(db, parsed, 'voice');
     return reply.send({ transcript, items });
   });
 }
