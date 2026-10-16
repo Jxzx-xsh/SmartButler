@@ -97,6 +97,56 @@ describe('createAiQueue 串行与优先级', () => {
   });
 });
 
+describe('createAiQueue.enqueueDeferred 的 resolve 语义', () => {
+  it('enqueueDeferred 的 Promise resolve 为 run() 的返回值（即便 run 为慢任务）', async () => {
+    const queue = createAiQueue();
+    const expected = { items: [{ name: '牛奶', quantity: 2 }] };
+
+    const result = await queue.enqueueDeferred<typeof expected>({
+      run: async () => {
+        // 微小真实延时，模拟识别耗时
+        await new Promise<void>((resolve) => setTimeout(resolve, 10));
+        return expected;
+      },
+    });
+
+    expect(result).toEqual(expected);
+  });
+
+  it('空闲定时器运行期间不会把在跑的 deferred 慢任务过早 settle 成空', async () => {
+    vi.useFakeTimers();
+    try {
+      // 与 server.ts 接线一致：开启空闲定时器但不配 deferredSource
+      const queue = createAiQueue({ idleMs: 1000 });
+      queue.start();
+
+      let runDone = false;
+      const expected = { items: [{ name: '牛奶', quantity: 2 }] };
+      const promise = queue.enqueueDeferred<typeof expected>({
+        run: async () => {
+          // 9 秒慢任务：远长于空闲定时器周期
+          await new Promise<void>((resolve) => setTimeout(resolve, 9000));
+          runDone = true;
+          return expected;
+        },
+      });
+
+      // 推进到 3 秒：空闲定时器已触发多次，但慢任务仍未完成、Promise 未 settle
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(runDone).toBe(false);
+
+      // 推进到 9 秒：此时才以正确返回值 resolve（固化「无 3 秒过早返回空」）
+      await vi.advanceTimersByTimeAsync(6000);
+      await expect(promise).resolves.toEqual(expected);
+      expect(runDone).toBe(true);
+
+      queue.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('createAiQueue 重试分类', () => {
   beforeEach(() => {
     vi.useFakeTimers();

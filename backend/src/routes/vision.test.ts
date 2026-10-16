@@ -91,6 +91,8 @@ describe('POST /api/vision/ingest-frame', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].source).toBe('vision');
     expect(body.items[0].confirmed).toBe(false);
+    // quantity 为数字（容错归一化后流转到入库）
+    expect(body.items[0].quantity).toBe(2);
     expect(visionIngest.ingestFrame).toHaveBeenCalledOnce();
   });
 

@@ -48,6 +48,8 @@ describe('createVisionIngest.ingestFrame', () => {
     expect(items.every((i) => i.confirmed === false)).toBe(true);
     expect(items[0]?.name).toBe('牛奶');
     expect(items[0]?.categoryId).toBe(cat.id);
+    // quantity 从识别结果流转入库为数字
+    expect(items[0]?.quantity).toBe(2);
     // 分类名匹配不到时 categoryId 为空
     expect(items[1]?.categoryId).toBeNull();
   });

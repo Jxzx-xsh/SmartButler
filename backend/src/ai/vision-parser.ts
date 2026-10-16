@@ -47,38 +47,53 @@ export interface VisionParser {
  * JSON 解析），并把画面中的中文相对/模糊到期线索换算为绝对到期日 ISO 字符串。
  */
 function buildSystemPrompt(ctx: { date: string; weekday: string }): string {
+  // 说明：提示词采用「识别任务前置、措辞紧凑」的结构。实测 qwen3-vl-8b 在过长/
+  // 过多前置约束的提示词下会直接返回 {"items":[]}（空识别）；把识别任务放在最前、
+  // 收紧措辞后模型能稳定返回物品。本提示词完整保留以下产品语义不变：
+  //   - 识别范围：画面中的实物 + 画面中可见的物品名称文字（包装/标签/小票/清单）；
+  //   - 日期换算能力：把中文相对/模糊日期按「当前日期」换算为绝对 ISO 日期；
+  //   - 字段集合：name/quantity/unit/category/location/expiryDate/shelfLifeDays/purchaseDate。
   return [
-    '你是一个家庭物品识别助手。请识别图片画面中出现的食材、食品与日用品，解析为结构化的物品清单。',
-    '识别来源既包括画面中的【实物】（如冰箱里的牛奶盒、桌上的水果），也包括画面中清晰可见的【物品名称文字】——例如包装/标签上印的品名、购物小票或清单上列出的物品。只要能从画面中确定一件家庭物品，就把它列入清单；不要因为"只是文字而非实物"而忽略它。',
-    '',
-    `当前日期：${ctx.date}（${ctx.weekday}），时区按 Asia/Shanghai 理解。`,
-    '',
-    '只输出一个严格的 JSON 对象，格式为：{ "items": [ { ... }, ... ] }，不要输出任何解释、不要用 Markdown 代码块。',
-    '',
-    '每个物品对象可包含以下字段（除 name 外均可省略）：',
-    '- name：物品名称（必填，字符串）。',
-    '- quantity：数量（整数）。',
-    '- unit：单位（字符串，如「盒」「袋」「瓶」）。',
-    '- category：分类名（字符串，如「乳制品」「蔬菜」「日用品」）。',
-    '- location：存放位置（字符串，如「冰箱冷藏」「橱柜」）。',
-    '- expiryDate：到期日期，务必输出【绝对日期的 ISO 8601 字符串】，如 "2025-01-10"。',
-    '- shelfLifeDays：保质期天数（整数）。仅当无法确定绝对到期日（例如只看到保质期而无生产/购买日）时才用它。',
-    '- purchaseDate：购买日期的 ISO 8601 字符串（如画面上明确可见）。',
-    '',
-    '关键——画面中的中文相对/模糊日期必须换算为绝对日期：',
-    '- 以上面的「当前日期」为基准进行推算。',
-    '- 「三天后」「一周后」等：在当前日期上加对应天数，得到绝对日期。',
-    '- 包装上的到期线索若能确定绝对到期日则填 expiryDate；否则填 shelfLifeDays。',
-    '- 所有日期一律用 ISO 8601 字符串（优先 YYYY-MM-DD）。',
-    '',
-    '若画面包含多个物品，请在 items 数组中分别列出。无法识别出任何物品时返回 { "items": [] }。',
+    '你是一个家庭物品识别助手。识别图片中出现的食材、食品与日用品，解析为结构化的物品清单。',
+    '识别来源既包括画面中的【实物】（如冰箱里的牛奶盒、桌上的水果），也包括画面中清晰可见的【物品名称文字】——例如包装/标签上印的品名、购物小票或清单上列出的物品。只要能从画面中确定一件家庭物品就列入；不要因为"只是文字而非实物"而忽略它。',
+    '只输出一个严格的 JSON 对象：{ "items": [ { ... }, ... ] }，不要输出任何解释、不要用 Markdown 代码块。无法识别出任何物品时返回 { "items": [] }。',
+    '每个物品对象字段（除 name 外均可省略）：name（物品名称，必填，字符串）、quantity（数量，整数）、unit（单位，字符串，如「盒」「袋」「瓶」）、category（分类名，字符串，如「乳制品」「蔬菜」「日用品」）、location（存放位置，字符串，如「冰箱冷藏」「橱柜」）、expiryDate（到期日期，绝对 ISO 8601 字符串，如 "2025-01-10"）、shelfLifeDays（保质期天数，整数；仅当无法确定绝对到期日时才用）、purchaseDate（购买日期的 ISO 8601 字符串，画面上明确可见时填）。',
+    `当前日期：${ctx.date}（${ctx.weekday}），时区按 Asia/Shanghai 理解。画面中的中文相对/模糊日期必须以「当前日期」为基准换算为绝对日期（「三天后」「一周后」即加对应天数）；能确定绝对到期日填 expiryDate，否则填 shelfLifeDays；所有日期一律用 ISO 8601 字符串（优先 YYYY-MM-DD）。`,
   ].join('\n');
 }
+
+/**
+ * 数量容错：接受 number 或可转数字的字符串，归一化为整数；
+ * 无法转换（NaN、空串、非数字文本如「两盒」）时产出 undefined（即「忽略该字段」），
+ * 而不是让整条 item 校验失败。null/缺省同样产出 undefined。
+ *
+ * 为什么用 preprocess 做字段级降级而非 union(...).catch(...)：
+ *   任务要求「无法转则忽略该字段而非整条失败」，preprocess 能把容错局部化到
+ *   单个字段，不影响同条 item 的其它字段与整体 { items: [...] } 结构校验。
+ */
+const zQuantity = z.preprocess((v) => {
+  if (v === null || v === undefined) {
+    return undefined;
+  }
+  if (typeof v === 'number') {
+    return Number.isFinite(v) ? Math.trunc(v) : undefined;
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t === '') {
+      return undefined;
+    }
+    const n = Number(t);
+    return Number.isFinite(n) ? Math.trunc(n) : undefined;
+  }
+  // 其它类型（对象、数组等）一律忽略该字段
+  return undefined;
+}, z.number().int().optional());
 
 /** 模型返回单个物品的 zod 结构：name 必填，其余可选（与 item-parser 同构）。 */
 const zRawItem = z.object({
   name: z.string(),
-  quantity: z.number().optional().nullable(),
+  quantity: zQuantity,
   unit: z.string().optional().nullable(),
   category: z.string().optional().nullable(),
   location: z.string().optional().nullable(),
