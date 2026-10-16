@@ -70,6 +70,15 @@ export interface BuildAppOptions {
    * （stream 端点退化为仅下发最新帧）；server.ts 构造真实实例并接到网关 onFrame。
    */
   frameBroadcaster?: FrameBroadcaster;
+  /**
+   * 注入的通话上行留存回调，供 POST /api/capture/talk 持久化录音。缺省不注入
+   * （talk 端点仍正常返回，仅不留存）；server.ts 实现为落 eventLogs(source='talk')
+   * + 写临时文件 data/talk/。
+   */
+  talkSink?: (
+    buffer: Buffer,
+    meta: { timestamp: number; mimetype?: string },
+  ) => Promise<void> | void;
 }
 
 /**
@@ -149,6 +158,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     ...(options.frameBroadcaster
       ? { broadcaster: options.frameBroadcaster }
       : {}),
+    ...(options.talkSink ? { talkSink: options.talkSink } : {}),
   });
   // 注入门控协调器注册门控路由
   app.register(gatingRoutes, { controller: gatingController });

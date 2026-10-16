@@ -7,6 +7,9 @@
  * - 仅在作为脚本直接执行时启动（被 import 时不触发）。
  */
 
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
 import { buildApp, createDefaultGatingController } from './app.js';
 import { db, sqlite } from './db/client.js';
 import { initSchema } from './db/init.js';
@@ -18,6 +21,31 @@ import { eventLogs } from './db/schema.js';
 import { createLmStudioClient } from './ai/lmstudio.js';
 import { createVisionParser } from './ai/vision-parser.js';
 import { createVisionIngest } from './capture/vision-ingest.js';
+
+/**
+ * 由上传 mimetype 粗略推断音频扩展名（仅用于临时文件命名，非严谨解析）。
+ * 识别常见通话录音类型，未知/缺省一律用 'webm'（PWA MediaRecorder 默认格式）。
+ */
+function guessAudioExt(mimetype?: string): string {
+  if (mimetype === undefined) {
+    return 'webm';
+  }
+  const lower = mimetype.toLowerCase();
+  if (lower.includes('ogg')) {
+    return 'ogg';
+  }
+  if (lower.includes('mp4') || lower.includes('m4a') || lower.includes('aac')) {
+    return 'm4a';
+  }
+  if (lower.includes('mpeg') || lower.includes('mp3')) {
+    return 'mp3';
+  }
+  if (lower.includes('wav')) {
+    return 'wav';
+  }
+  // webm（含 opus）及未知类型均用 webm
+  return 'webm';
+}
 
 /** 启动服务器 */
 async function start(): Promise<void> {
@@ -124,12 +152,48 @@ async function start(): Promise<void> {
     onAudio: (pcmChunk, timestamp) => gatingController.processAudio(pcmChunk, timestamp),
   });
 
-  // 同一门控实例 + 视觉入库管线 + 帧广播器注入 app（供路由/状态读取与接线）
+  // 通话上行留存回调（方案 A）：POST /api/capture/talk 收到录音后调用。
+  // 仅做上行留存——写临时文件 data/talk/ + 落 eventLogs(source='talk')，不做
+  // WebRTC/实时回放。全程 try/catch 吞错，对齐 gating/vision 落库容错写法：
+  // 留存失败绝不 throw 回路由（上行字节已完整接收，接口仍应 200）。
+  const talkSink = async (
+    buffer: Buffer,
+    meta: { timestamp: number; mimetype?: string },
+  ): Promise<void> => {
+    // 写临时文件 data/talk/talk-<timestamp>.<ext>；ext 由 mimetype 粗略推断，默认 webm
+    try {
+      const dir = path.resolve('data', 'talk');
+      await mkdir(dir, { recursive: true });
+      const ext = guessAudioExt(meta.mimetype);
+      await writeFile(path.join(dir, `talk-${meta.timestamp}.${ext}`), buffer);
+    } catch (err) {
+      console.error('[talk] 录音临时文件写入失败（不影响接收）：', err);
+    }
+    // 落 eventLogs(source='talk')：记录接收到的通话录音元信息，便于后续审计
+    try {
+      db.insert(eventLogs)
+        .values({
+          eventType: 'talk_received',
+          payload: JSON.stringify({
+            bytes: buffer.length,
+            timestamp: meta.timestamp,
+            mimetype: meta.mimetype,
+          }),
+          source: 'talk',
+        })
+        .run();
+    } catch {
+      // 事件日志落库失败不影响主流程
+    }
+  };
+
+  // 同一门控实例 + 视觉入库管线 + 帧广播器 + 通话留存回调注入 app（供路由/状态读取与接线）
   const app = buildApp({
     captureGateway,
     gatingController,
     visionIngest,
     frameBroadcaster: broadcaster,
+    talkSink,
   });
 
   // 启动 AI 任务队列（空闲批处理定时器），进程关闭时停止

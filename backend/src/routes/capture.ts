@@ -6,6 +6,7 @@
  * - POST /api/capture/start    — 校验 body { url, fps? } 后切换源并启动采集
  * - POST /api/capture/stop     — 停止采集
  * - GET  /api/capture/snapshot — 返回最近一帧 JPEG（无帧则 503）
+ * - POST /api/capture/talk     — 接收手机端上传通话录音（方案 A 仅上行留存）
  *
  * 错误体统一为 { error: { message, code? } }，与现有路由（ai.ts / voice.ts）一致。
  *
@@ -90,6 +91,15 @@ export interface CaptureRoutesOptions extends FastifyPluginOptions {
    * 缺省（未接线/测试不关心 stream）则该端点仅能下发最新帧，无最新帧返回 503。
    */
   broadcaster?: FrameBroadcaster;
+  /**
+   * 可选通话上行留存回调：POST /api/capture/talk 收到录音字节后交给它处理
+   * （由 server.ts 实现为落 eventLogs(source='talk') + 写临时文件）。缺省则该
+   * 端点仍正常返回（sink 为 no-op，仅不留存），便于测试不关心留存时注入。
+   */
+  talkSink?: (
+    buffer: Buffer,
+    meta: { timestamp: number; mimetype?: string },
+  ) => Promise<void> | void;
 }
 
 /** POST /api/capture/start 请求体校验：url 必填且为合法 URL，fps 可选正数。 */
@@ -105,7 +115,7 @@ export async function captureRoutes(
   app: FastifyInstance,
   opts: CaptureRoutesOptions,
 ): Promise<void> {
-  const { gateway, broadcaster } = opts;
+  const { gateway, broadcaster, talkSink } = opts;
 
   // GET /api/capture/status — 当前状态 + 是否已配置源（sourceUrl 非空）
   app.get('/api/capture/status', async () => {
@@ -137,6 +147,43 @@ export async function captureRoutes(
       });
     }
     return reply.type('image/jpeg').send(frame);
+  });
+
+  // POST /api/capture/talk — 接收手机端上传的通话录音（上行）。
+  //
+  // 方案 A 最小诚实版：当前手机端为「只推不收」的现成推流 App，且后端无 WebRTC
+  // 信令，故这里只做**上行留存**——接收录音字节并交给注入的 talkSink 持久化
+  // （落 eventLogs(source='talk') + 写临时文件），绝不伪造「实时通话/手机端回放」。
+  // 手机端回放待后续设备/信令支持，故返回体用 note 明确标注该边界。
+  app.post('/api/capture/talk', async (request, reply) => {
+    // 取上传的音频文件（@fastify/multipart，单文件上限由 app.ts 注册的 25MB 约束）
+    const uploaded = await request.file();
+    if (uploaded === undefined) {
+      return reply.code(400).send({
+        error: { message: '缺少上传的音频', code: 'NO_AUDIO' },
+      });
+    }
+
+    const buffer = await uploaded.toBuffer();
+
+    // 交给 talkSink 留存：留存失败不应拖垮请求（上行接收本身已成功），故 try/catch
+    // 吞错，对齐现有 gating/vision 落库容错写法。sink 缺省则为 no-op（仅不留存）。
+    if (talkSink) {
+      try {
+        await talkSink(buffer, {
+          timestamp: Date.now(),
+          ...(uploaded.mimetype ? { mimetype: uploaded.mimetype } : {}),
+        });
+      } catch {
+        // 通话录音留存失败不影响接口返回（上行字节已完整接收）
+      }
+    }
+
+    return {
+      ok: true,
+      bytes: buffer.length,
+      note: '已接收音频；手机端回放待后续设备支持',
+    };
   });
 
   // GET /api/capture/stream — MJPEG multipart/x-mixed-replace 持续推流。

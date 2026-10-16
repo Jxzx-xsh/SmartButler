@@ -51,6 +51,29 @@ function makeMockGateway(
   } as CaptureGatewayHolder;
 }
 
+/** 构造一个含单个文件字段 file（talk.webm / audio/webm）的 multipart/form-data 请求体。 */
+function buildAudioMultipart(fileContent: Buffer): {
+  payload: Buffer;
+  headers: Record<string, string>;
+} {
+  const boundary = '----capturetalkboundary1234567890';
+  const head = Buffer.from(
+    `--${boundary}\r\n` +
+      'Content-Disposition: form-data; name="file"; filename="talk.webm"\r\n' +
+      'Content-Type: audio/webm\r\n\r\n',
+    'utf8',
+  );
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8');
+  const payload = Buffer.concat([head, fileContent, tail]);
+  return {
+    payload,
+    headers: {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      'content-length': String(payload.length),
+    },
+  };
+}
+
 beforeEach(() => {
   const conn = createDb(':memory:');
   initSchema(conn.sqlite);
@@ -369,6 +392,90 @@ describe('GET /api/capture/stream', () => {
     const res = await app.inject({ method: 'GET', url: '/api/capture/stream' });
     expect(res.statusCode).toBe(503);
     expect(res.json().error.code).toBe('NO_STREAM');
+  });
+});
+
+describe('POST /api/capture/talk', () => {
+  it('上传音频返回 200 且 ok/bytes 正确，注入的 talkSink 收到 buffer', async () => {
+    const audio = Buffer.from([0x01, 0x02, 0x03, 0x04, 0x05]);
+    const talkSink = vi.fn();
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway, talkSink });
+    await app.ready();
+
+    const { payload, headers } = buildAudioMultipart(audio);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capture/talk',
+      payload,
+      headers,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.bytes).toBe(audio.length);
+    expect(typeof body.note).toBe('string');
+
+    // talkSink 收到完整字节与元信息
+    expect(talkSink).toHaveBeenCalledTimes(1);
+    const [buf, meta] = talkSink.mock.calls[0] as [
+      Buffer,
+      { timestamp: number; mimetype?: string },
+    ];
+    expect(buf.equals(audio)).toBe(true);
+    expect(typeof meta.timestamp).toBe('number');
+    expect(meta.mimetype).toBe('audio/webm');
+  });
+
+  it('无文件上传返回 400 NO_AUDIO', async () => {
+    const talkSink = vi.fn();
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway, talkSink });
+    await app.ready();
+
+    // 只含普通字段、无文件的 multipart body
+    const boundary = '----noaudiotalk';
+    const payload = Buffer.from(
+      `--${boundary}\r\n` +
+        'Content-Disposition: form-data; name="foo"\r\n\r\n' +
+        'bar\r\n' +
+        `--${boundary}--\r\n`,
+      'utf8',
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capture/talk',
+      payload,
+      headers: {
+        'content-type': `multipart/form-data; boundary=${boundary}`,
+        'content-length': String(payload.length),
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('NO_AUDIO');
+    expect(talkSink).not.toHaveBeenCalled();
+  });
+
+  it('未注入 talkSink 时仍返回 200 ok（sink 可选、缺省 no-op）', async () => {
+    const audio = Buffer.from([0xaa, 0xbb, 0xcc]);
+    const gateway = makeMockGateway();
+    app = buildApp({ db, captureGateway: gateway });
+    await app.ready();
+
+    const { payload, headers } = buildAudioMultipart(audio);
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/capture/talk',
+      payload,
+      headers,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.ok).toBe(true);
+    expect(body.bytes).toBe(audio.length);
   });
 });
 
