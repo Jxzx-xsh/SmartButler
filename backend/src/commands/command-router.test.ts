@@ -529,4 +529,212 @@ describe('createCommandRouter.route', () => {
     expect(result.reason).toBe('未找到匹配设备');
     expect(haClient.turnOn).not.toHaveBeenCalled();
   });
+
+  it('(q) 方案 C 真机根因修复：turn_on + light/button/select 同名候选 → domain 过滤排除 button/select，唯一 light 命中执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        // 用户要开的灯（light）
+        entity('light.hyd_cn_945476182_1s1_s_3_light', '晾衣机  灯'),
+        // 同名的 button「开关状态切换」—— 归一化后 includes「晾衣机灯」会一起命中，需被 domain 过滤剔除
+        entity('button.hyd_cn_945476182_1s1_toggle_a_3_1', '晾衣机  灯 开关状态切换'),
+        // 同名的 select「夜灯开关」—— 同样需被 domain 过滤剔除
+        entity('select.hyd_cn_945476182_1s1_night', '晾衣机  灯 夜灯开关设置'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '晾衣机的灯' },
+        rawText: '把晾衣机的灯打开',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('把晾衣机的灯打开');
+
+    // 改进前：三者归一化都 includes「晾衣机灯」→ 多候选、不执行；
+    // 改进后：domain 过滤剔除 button/select → 唯一 light → 执行。
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOn).toHaveBeenCalledWith('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOn).toHaveBeenCalledTimes(1);
+    expect(haClient.turnOff).not.toHaveBeenCalled();
+  });
+
+  it('(r) 方案 C 最优名收敛：domain 过滤后仍多个 light，归一化完全相等者唯一命中执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        // 完全相等者（归一化「晾衣机灯」）
+        entity('light.a', '晾衣机  灯'),
+        // 更长名（归一化「晾衣机灯开关状态切换」，非完全相等）
+        entity('light.b', '晾衣机  灯 开关状态切换'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '晾衣机灯' },
+        rawText: '开晾衣机灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开晾衣机灯');
+
+    // 两个均为 light（domain 过滤都保留）→ 最优名：仅 light.a 归一化完全相等 → 唯一命中执行。
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.a');
+    expect(haClient.turnOn).toHaveBeenCalledWith('light.a');
+  });
+
+  it('(s) 方案 C 最优名无唯一完全相等 → 仍返回多候选，不猜测不误控', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.main', '客厅主灯'),
+        entity('light.side', '客厅侧灯'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        // 归一化「客厅灯」用停用词无法单字切分；第 2 级关键词「客厅灯」整体不在任一实体，
+        // 故此处构造为能命中两 light 的 target：用「客厅」让两者第 1 级命中。
+        slots: { action: 'turn_on', target: '客厅' },
+        rawText: '开客厅灯',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开客厅灯');
+
+    // 两 light 均被 domain 保留；无一归一化等于「客厅」→ 仍多候选。
+    expect(result.executed).toBe(false);
+    expect(result.reason).toBe('匹配到多个设备');
+    expect(result.candidates).toEqual(['light.main', 'light.side']);
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(t) 方案 C domain 过滤后全空 → 未找到匹配设备，不误控 button', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        // 候选里只有不可开关的 button
+        entity('button.hyd_cn_945476182_1s1_toggle_a_3_1', '晾衣机  灯 开关状态切换'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '晾衣机灯开关状态切换' },
+        rawText: '打开晾衣机灯开关状态切换',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('打开晾衣机灯开关状态切换');
+
+    // 第 1 级命中 button → domain 过滤后空 → 返回空集 → 未找到匹配设备，turnOn 不被调。
+    expect(result.executed).toBe(false);
+    expect(result.reason).toBe('未找到匹配设备');
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(u) 方案 C action 未提供 → 不做 domain 过滤（保持通用），唯一 button 候选仍默认 turn_on 执行', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('button.doorbell', '门铃'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        // 无 action 槽位 → 不触发 domain 过滤；唯一命中 button → handleImmediateAction 默认 turn_on。
+        slots: { target: '门铃' },
+        rawText: '门铃',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('门铃');
+
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('button.doorbell');
+    expect(haClient.turnOn).toHaveBeenCalledWith('button.doorbell');
+  });
+
+  it('(v) 方案 C turn_off 同样触发 domain 过滤 → 唯一 light 命中调 turnOff', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('light.hyd_cn_945476182_1s1_s_3_light', '晾衣机  灯'),
+        entity('button.hyd_cn_945476182_1s1_toggle_a_3_1', '晾衣机  灯 开关状态切换'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_off', target: '晾衣机的灯' },
+        rawText: '把晾衣机的灯关掉',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('把晾衣机的灯关掉');
+
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOff).toHaveBeenCalledWith('light.hyd_cn_945476182_1s1_s_3_light');
+    expect(haClient.turnOn).not.toHaveBeenCalled();
+  });
+
+  it('(w) 方案 C 白名单含 fan：turn_on 唯一命中 fan → 执行（验证白名单非仅 light/switch）', async () => {
+    const haClient = makeHaClient({
+      getStates: vi.fn().mockResolvedValue([
+        entity('fan.bedroom', '卧室风扇'),
+        // 同名的 sensor，应被 domain 过滤剔除
+        entity('sensor.bedroom_fan_speed', '卧室风扇转速'),
+      ]),
+    });
+    const router = createCommandRouter({
+      db,
+      classifier: makeClassifier({
+        intent: 'immediate_action',
+        slots: { action: 'turn_on', target: '卧室风扇' },
+        rawText: '开卧室风扇',
+      }),
+      itemParser: makeItemParser([]),
+      haClient,
+      haConfig: CONFIGURED,
+      now: () => FIXED_NOW,
+    });
+
+    const result = await router.route('开卧室风扇');
+
+    // fan 在白名单 → 保留；sensor 被剔除 → 唯一 fan 命中执行。
+    expect(result.executed).toBe(true);
+    expect(result.entityId).toBe('fan.bedroom');
+    expect(haClient.turnOn).toHaveBeenCalledWith('fan.bedroom');
+  });
 });

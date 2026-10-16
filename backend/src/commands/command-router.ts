@@ -94,6 +94,20 @@ const MATCH_PARTICLES = ['的', '地', '得'] as const;
 const MATCH_STOPWORDS = ['所有', '那个', '这个', '那', '这', '个', '只', '台', '盏'] as const;
 
 /**
+ * 可开关语义 domain 白名单：开关类 action（turn_on/turn_off）下只保留这些 domain 的候选。
+ * light（灯）/ switch（插座开关）/ fan（风扇）/ climate（空调温控）均有明确的开/关语义。
+ * 排除 button（只触发一次、无持续开关态）/ select（选项选择）/ sensor（只读传感器）/
+ * scene（场景，非单设备开关）等——它们不应响应「打开/关闭某设备」，否则会误控。
+ * 真机场景：「晾衣机灯开关状态切换」是 button，会与 light 一起被归一化命中，需在此剔除。
+ */
+const SWITCHABLE_DOMAINS = ['light', 'switch', 'fan', 'climate'] as const;
+
+/** 从 entity_id 取 domain（HA REST 契约保证形如 `domain.object_id`）。 */
+function domainOf(entityId: string): string {
+  return entityId.split('.')[0] ?? '';
+}
+
+/**
  * 归一化字符串用于匹配比较（等价归一化，不改变语义）：
  * 1. 转小写（兼容英文 friendly_name，大小写不敏感）；
  * 2. 去除所有空白——含半角空白与全角空格 \u3000（防某些环境 \s 不含全角空格）；
@@ -143,11 +157,22 @@ function splitKeywords(normalized: string): string[] {
  *
  * 命中 ≥2 个时上层走多候选确认分支，绝不自行挑一个执行（控制设备有副作用，
  * 宁可多问也不误控）。target/entityId 均缺失时返回空数组。
+ *
+ * 多候选收敛（方案 C，仅对 target 分支的候选生效；entityId 分支已显式指名，不收敛）：
+ * 在三级匹配产出候选后、返回前，统一做两步收敛：
+ *  1) 动作→domain 过滤：当 action 为 turn_on/turn_off 时，只保留 SWITCHABLE_DOMAINS
+ *     内的候选（排除 button/select/sensor/scene 等）；若过滤后全空（候选里全是不可
+ *     开关设备）则返回空集，交上层走「未找到匹配设备」，绝不误控。action 未提供或
+ *     非开关类时不过滤，保持通用行为。
+ *  2) 最优名匹配：domain 过滤后仍 ≥2 个候选时，取 friendly_name 归一化后与 target
+ *     归一化「完全相等」的候选；若恰好唯一则收敛执行，否则（0 个或 ≥2 个同等相等）
+ *     仍返回全部候选交用户澄清——完全相等是零歧义硬判据，不猜测、不误控。
  */
 function matchEntities(
   states: HaEntityState[],
   target?: string,
   entityId?: string,
+  action?: 'turn_on' | 'turn_off',
 ): string[] {
   const hits: string[] = [];
   const seen = new Set<string>();
@@ -191,31 +216,61 @@ function matchEntities(
       }
     }
   }
-  if (hits.length > 0) {
-    return hits;
-  }
 
-  // 第 2 级：关键词全覆盖匹配（仅 friendly_name，AND 语义，带护栏）。
-  const keywords = splitKeywords(nTarget);
-  // 护栏：单字单关键词太容易误中无关实体，不启用第 2 级，维持零命中。
-  if (keywords.length === 1 && (keywords[0] as string).length < 2) {
-    return hits;
-  }
-  if (keywords.length === 0) {
-    return hits;
-  }
-  for (const s of states) {
-    const nFriendly = friendlyOf(s);
-    if (nFriendly === '') {
-      continue;
-    }
-    // 要求全部关键词都出现在同一实体 friendly_name 中才命中。
-    if (keywords.every((kw) => nFriendly.includes(kw))) {
-      add(s.entity_id);
+  // 第 2 级：关键词全覆盖匹配（仅第 1 级零命中时启用；仅 friendly_name，AND 语义，带护栏）。
+  if (hits.length === 0) {
+    const keywords = splitKeywords(nTarget);
+    // 护栏：单字单关键词太容易误中无关实体，不启用第 2 级，维持零命中。
+    const singleShortKeyword = keywords.length === 1 && (keywords[0] as string).length < 2;
+    if (keywords.length > 0 && !singleShortKeyword) {
+      for (const s of states) {
+        const nFriendly = friendlyOf(s);
+        if (nFriendly === '') {
+          continue;
+        }
+        // 要求全部关键词都出现在同一实体 friendly_name 中才命中。
+        if (keywords.every((kw) => nFriendly.includes(kw))) {
+          add(s.entity_id);
+        }
+      }
     }
   }
 
-  return hits;
+  // 收敛（方案 C）：三级匹配得到 hits 后统一应用，零候选直接返回。
+  if (hits.length === 0) {
+    return hits;
+  }
+
+  // 收敛步骤 1：动作→domain 过滤（仅开关类 action 生效）。
+  let converged = hits;
+  if (action === 'turn_on' || action === 'turn_off') {
+    const filtered = converged.filter((id) =>
+      (SWITCHABLE_DOMAINS as readonly string[]).includes(domainOf(id)),
+    );
+    // 候选全被 domain 过滤掉（全是不可开关设备）→ 返回空集，交上层走「未找到匹配设备」，不误控。
+    if (filtered.length === 0) {
+      return [];
+    }
+    converged = filtered;
+  }
+
+  // 收敛步骤 2：最优名匹配（过滤后仍 ≥2 个候选时，取归一化完全相等者）。
+  if (converged.length > 1 && nTarget !== '') {
+    const byId = new Map<string, HaEntityState>();
+    for (const s of states) {
+      byId.set(s.entity_id, s);
+    }
+    const exact = converged.filter((id) => {
+      const s = byId.get(id);
+      return s !== undefined && friendlyOf(s) === nTarget;
+    });
+    // 唯一完全相等 → 收敛为该实体；否则（0 个或 ≥2 个同等相等）仍返回全部候选交用户澄清。
+    if (exact.length === 1) {
+      return exact;
+    }
+  }
+
+  return converged;
 }
 
 /**
@@ -256,7 +311,7 @@ export function createCommandRouter(deps: CreateCommandRouterDeps): CommandRoute
     const slots = result.slots ?? {};
     try {
       const states = await haClient.getStates();
-      const hits = matchEntities(states, slots.target, slots.entityId);
+      const hits = matchEntities(states, slots.target, slots.entityId, slots.action);
 
       if (hits.length === 0) {
         return { intent: 'immediate_action', executed: false, reason: '未找到匹配设备' };
