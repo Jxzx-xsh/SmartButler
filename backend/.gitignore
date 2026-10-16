@@ -8,6 +8,10 @@ data/
 *.db-wal
 *.db-shm
 
+# 本地环境变量（含真实配置/令牌，不入库）；保留示例文件可提交
+.env
+!.env.example
+
 # 临时文件
 *.tmp.ts
 # whisper.cpp 本地模型与下载分片（体积大，不入库；按需本地下载）
