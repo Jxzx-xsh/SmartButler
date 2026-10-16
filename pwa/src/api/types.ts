@@ -60,3 +60,31 @@ export interface ApiErrorBody {
     code?: string;
   };
 }
+
+/** 采集网关运行状态（GET /api/capture/status 返回）。 */
+export type CaptureState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'stopped';
+
+/** 采集网关状态指标，对齐后端 /api/capture/status 返回体。 */
+export interface CaptureStatus {
+  /** 当前状态机状态 */
+  state: CaptureState;
+  /** 当前采集源地址，未配置时为空串 */
+  sourceUrl: string;
+  /** 抽帧帧率 */
+  fps: number;
+  /** 最近一帧时间戳（ms，Date.now()），尚无帧时为 null */
+  lastFrameAt: number | null;
+  /** 累计产出的完整帧数 */
+  frameCount: number;
+  /** 累计透传的音频字节数 */
+  audioBytes: number;
+  /** 累计自动重连次数 */
+  reconnectAttempts: number;
+  /** 源是否已配置（sourceUrl 非空） */
+  configured: boolean;
+}

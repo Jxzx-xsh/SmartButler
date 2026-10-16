@@ -1,4 +1,5 @@
 import type {
+  CaptureStatus,
   Category,
   CreateItemBody,
   Item,
@@ -57,21 +58,26 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!res.ok) {
-    let message = `请求失败（${res.status}）`;
-    let code: string | undefined;
-    try {
-      const data = (await res.json()) as { error?: { message?: string; code?: string } };
-      if (data?.error?.message) message = data.error.message;
-      code = data?.error?.code;
-    } catch {
-      // 响应体非 JSON，沿用默认兜底提示
-    }
-    throw new ApiError(message, res.status, code);
+    throw await toApiError(res);
   }
 
   // 204 无响应体
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/** 从非 2xx 响应解析统一错误体 { error: { message, code? } }，兜底状态码提示。 */
+async function toApiError(res: Response): Promise<ApiError> {
+  let message = `请求失败（${res.status}）`;
+  let code: string | undefined;
+  try {
+    const data = (await res.json()) as { error?: { message?: string; code?: string } };
+    if (data?.error?.message) message = data.error.message;
+    code = data?.error?.code;
+  } catch {
+    // 响应体非 JSON，沿用默认兜底提示
+  }
+  return new ApiError(message, res.status, code);
 }
 
 /** 物品相关接口薄封装。 */
@@ -97,4 +103,42 @@ export const itemsApi = {
 /** 分类相关接口薄封装。 */
 export const categoriesApi = {
   list: () => request<Category[]>('/api/categories'),
+};
+
+/** 采集网关相关接口薄封装。 */
+export const captureApi = {
+  /** 读取采集状态（轮询用）。 */
+  status: () => request<CaptureStatus>('/api/capture/status'),
+  /** 启动采集：切换源 + 启动，返回最新状态。 */
+  start: (body: { url: string; fps?: number }) =>
+    request<CaptureStatus>('/api/capture/start', { method: 'POST', body }),
+  /** 停止采集，返回最新状态。 */
+  stop: () => request<CaptureStatus>('/api/capture/stop', { method: 'POST' }),
+  /** MJPEG 实时流地址，直接喂给 <img src>。 */
+  streamUrl: () => `${API_BASE}/api/capture/stream`,
+  /** 最近一帧快照地址，带时间戳防缓存。 */
+  snapshotUrl: () => `${API_BASE}/api/capture/snapshot?t=${Date.now()}`,
+  /**
+   * 上传通话录音（方案 A 仅上行留存）。走原生 fetch + FormData 发 multipart，
+   * 不经 JSON request 封装；复用 ApiError 风格做错误处理。
+   */
+  talk: async (blob: Blob): Promise<{ ok: boolean; bytes: number; note: string }> => {
+    const form = new FormData();
+    form.append('audio', blob, 'talk.webm');
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/capture/talk`, {
+        method: 'POST',
+        body: form,
+      });
+    } catch {
+      throw new ApiError('无法连接服务器，请确认后端已启动', 0);
+    }
+
+    if (!res.ok) {
+      throw await toApiError(res);
+    }
+    return (await res.json()) as { ok: boolean; bytes: number; note: string };
+  },
 };

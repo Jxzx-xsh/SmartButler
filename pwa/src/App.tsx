@@ -4,10 +4,11 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { ExpiryBoard } from './components/ExpiryBoard';
 import { ItemFormModal } from './components/ItemFormModal';
 import { ItemList } from './components/ItemList';
+import { MonitorView } from './components/MonitorView';
 import { useDeleteItem } from './hooks/useItems';
 import styles from './App.module.css';
 
-type Tab = 'board' | 'all';
+type Tab = 'board' | 'all' | 'monitor';
 
 /** 顶层布局：标题 + 标签切换（到期看板 / 全部物品），统筹编辑与删除交互。 */
 export default function App() {
@@ -57,18 +58,27 @@ export default function App() {
         >
           全部物品
         </button>
+        <button
+          type="button"
+          className={`${styles.tab} ${tab === 'monitor' ? styles.tabActive : ''}`}
+          onClick={() => setTab('monitor')}
+        >
+          监控
+        </button>
       </nav>
 
       <main className={styles.main}>
-        {tab === 'board' ? (
+        {tab === 'board' && (
           <ExpiryBoard onEdit={handleEdit} onDelete={handleDelete} />
-        ) : (
+        )}
+        {tab === 'all' && (
           <ItemList
             onAdd={() => setFormTarget(null)}
             onEdit={handleEdit}
             onDelete={handleDelete}
           />
         )}
+        {tab === 'monitor' && <MonitorView />}
       </main>
 
       {formTarget !== undefined && (

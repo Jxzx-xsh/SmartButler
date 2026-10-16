@@ -1,0 +1,164 @@
+.container {
+  display: grid;
+  gap: 16px;
+}
+
+/* 画面区：16:9 黑底，画面等比内缩 */
+.screen {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.frame {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.placeholder {
+  color: #cfd8dc;
+  font-size: 14px;
+  text-align: center;
+  padding: 0 24px;
+  line-height: 1.6;
+}
+
+/* 状态面板 */
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.statusGrid dt {
+  color: var(--color-text-soft);
+}
+
+.statusGrid dd {
+  margin: 0;
+  color: var(--color-text);
+  text-align: right;
+}
+
+/* 控制区 */
+.controls {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 8px;
+}
+
+.label {
+  font-size: 12px;
+  color: var(--color-text-soft);
+}
+
+.input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.btnRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.btn {
+  flex: 1 1 auto;
+  min-width: 96px;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+}
+
+.primary {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.danger {
+  background: var(--color-danger);
+  color: #fff;
+  border-color: var(--color-danger);
+}
+
+/* 快照 / 通话区 */
+.snapshot,
+.talk {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 8px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-soft);
+  background: rgba(0, 0, 0, 0.03);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  line-height: 1.5;
+}
+
+.hintError {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+.hintOk {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-ok);
+}
