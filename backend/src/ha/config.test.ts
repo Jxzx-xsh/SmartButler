@@ -37,6 +37,11 @@ describe('loadHaConfig wsUrl 推导', () => {
     expect(config.wsUrl).toBe('ws://custom:9000/ws');
   });
 
+  it('HA_WS_URL 为空字符串（.env 留空）时视为未配置，回退推导', () => {
+    const config = loadHaConfig({ HA_BASE_URL: 'http://ha:8123', HA_WS_URL: '' });
+    expect(config.wsUrl).toBe('ws://ha:8123/api/websocket');
+  });
+
   it('baseUrl 末尾斜杠被去除，推导不含重复斜杠', () => {
     const config = loadHaConfig({ HA_BASE_URL: 'http://ha:8123/' });
     expect(config.baseUrl).toBe('http://ha:8123');

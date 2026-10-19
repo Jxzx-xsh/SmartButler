@@ -69,8 +69,11 @@ export function loadHaConfig(env: NodeJS.ProcessEnv = process.env): HaConfig {
   const baseUrl = (env.HA_BASE_URL ?? '').replace(/\/+$/, '');
   // token（敏感）：缺省空字符串
   const token = env.HA_TOKEN ?? '';
-  // wsUrl：显式配置优先，否则从 baseUrl 推导
-  const wsUrl = env.HA_WS_URL ?? deriveWsUrl(baseUrl);
+  // wsUrl：显式配置优先，否则从 baseUrl 推导。
+  // 注意：.env 里 `HA_WS_URL=` 留空会得到空字符串而非 undefined，
+  // 空串（含纯空白）同样视为未配置，与"留空=自动推导"的文档约定一致。
+  const explicitWsUrl = env.HA_WS_URL?.trim() ?? '';
+  const wsUrl = explicitWsUrl !== '' ? explicitWsUrl : deriveWsUrl(baseUrl);
 
   // 超时按 Number 解析；非法（NaN）或 <=0 统一回退到默认值（对齐 ai/config.ts 写法）
   const parsedTimeout = Number(env.HA_TIMEOUT_MS);
