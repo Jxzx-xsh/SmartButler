@@ -6,13 +6,15 @@
  * 自动调用 computeExpiryDate 填充到期日。
  */
 
-import { and, asc, eq, isNotNull, lte, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, lte, type SQL } from 'drizzle-orm';
 
 import type { AppDatabase } from './client.js';
 import {
   categories,
+  expiryRecords,
   items,
   type Category,
+  type ExpiryRecord,
   type Item,
   type NewItem,
 } from './schema.js';
@@ -131,6 +133,111 @@ export function listExpiringItems(
     .where(and(isNotNull(items.expiryDate), lte(items.expiryDate, threshold)))
     .orderBy(asc(items.expiryDate))
     .all();
+}
+
+// ─── 消耗 / 用完登记 ─────────────────────────────────────────
+
+/** consumeItem 的可选参数 */
+export interface ConsumeItemOptions {
+  /** 本次消耗数量，默认 1 */
+  quantity?: number;
+  /** 事件类型：已消耗 / 已丢弃，默认 consumed */
+  eventType?: 'consumed' | 'discarded';
+  /** 记录时间（毫秒时间戳），默认走 expiryRecords 的 $defaultFn（便于测试显式注入） */
+  recordedAt?: number;
+}
+
+/**
+ * 登记物品消耗 / 用完。
+ * 查 item：不存在直接返回 null 且不写任何记录；
+ * 存在时按 next = max(0, quantity - qty) 计算剩余：
+ *   - next === 0：删除该物品（用完），返回 null；
+ *   - next  > 0：updateItem 扣减数量，返回更新后的记录。
+ * 无论删除还是扣减，均向 expiryRecords 插入一条 { itemId, eventType } 留痕。
+ */
+export function consumeItem(
+  db: AppDatabase,
+  itemId: number,
+  opts: ConsumeItemOptions = {},
+): Item | null {
+  const item = getItem(db, itemId);
+  if (item === null) {
+    // 物品不存在：不插记录、返回 null
+    return null;
+  }
+
+  const qty = opts.quantity ?? 1;
+  const eventType = opts.eventType ?? 'consumed';
+  const next = Math.max(0, item.quantity - qty);
+
+  // 原子化「插记录 + 扣减/删除」：用完时先插记录再删 item，
+  // 依赖 expiry_record.item_id 的 ON DELETE SET NULL，删 item 后记录 item_id 自动置 null、留痕保留。
+  return db.transaction((tx) => {
+    tx.insert(expiryRecords)
+      .values({
+        itemId,
+        eventType,
+        ...(opts.recordedAt !== undefined
+          ? { recordedAt: opts.recordedAt }
+          : {}),
+      })
+      .run();
+
+    if (next === 0) {
+      // 用完：删除物品并返回 null（记录已插，item_id 将被置 null）
+      tx.delete(items).where(eq(items.id, itemId)).run();
+      return null;
+    }
+
+    // 扣减数量，返回更新后的记录
+    const rows = tx
+      .update(items)
+      .set({ quantity: next, updatedAt: Date.now() })
+      .where(eq(items.id, itemId))
+      .returning()
+      .all();
+    return rows[0] ?? null;
+  });
+}
+
+/** listConsumptionHistory 的可选参数 */
+export interface ConsumptionHistoryOptions {
+  /** 返回条数上限，默认 50 */
+  limit?: number;
+  /** 仅查指定物品的消耗记录 */
+  itemId?: number;
+}
+
+/** 消耗历史记录：expiryRecords 行 + 关联物品名称（物品已删时为 null） */
+export type ConsumptionHistoryRow = ExpiryRecord & { itemName: string | null };
+
+/**
+ * 列出消耗 / 用完记录，按记录时间降序，leftJoin items 取物品名称
+ * （物品已被删除时 itemName 为 null）。默认返回最近 50 条。
+ */
+export function listConsumptionHistory(
+  db: AppDatabase,
+  opts: ConsumptionHistoryOptions = {},
+): ConsumptionHistoryRow[] {
+  const limit = opts.limit ?? 50;
+
+  const base = db
+    .select({
+      id: expiryRecords.id,
+      itemId: expiryRecords.itemId,
+      eventType: expiryRecords.eventType,
+      recordedAt: expiryRecords.recordedAt,
+      itemName: items.name,
+    })
+    .from(expiryRecords)
+    .leftJoin(items, eq(expiryRecords.itemId, items.id));
+
+  const query =
+    opts.itemId !== undefined
+      ? base.where(eq(expiryRecords.itemId, opts.itemId))
+      : base;
+
+  return query.orderBy(desc(expiryRecords.recordedAt)).limit(limit).all();
 }
 
 // ─── 分类仓储 ────────────────────────────────────────────────

@@ -76,6 +76,30 @@ export const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
+/** POST /api/items/:id/consume 请求体校验：数量与事件类型均可选 */
+export const consumeBodySchema = z.object({
+  /** 本次消耗数量：可选正整数，默认由仓储取 1 */
+  quantity: z.number().int().positive().optional(),
+  /** 事件类型：已消耗 / 已丢弃，可选，默认由仓储取 consumed */
+  eventType: z.enum(['consumed', 'discarded']).optional(),
+});
+
+/** 解析后的消耗请求体类型 */
+export type ConsumeBody = z.infer<typeof consumeBodySchema>;
+
+/** GET /api/consumption/history 查询参数校验（query string 均为字符串，需 coerce） */
+export const consumptionHistoryQuerySchema = z.object({
+  /** 返回条数上限：正整数，最多 200，默认 50 */
+  limit: z.coerce.number().int().positive().max(200).default(50),
+  /** 物品过滤：可选正整数 */
+  itemId: z.coerce.number().int().positive().optional(),
+});
+
+/** 解析后的消耗历史查询参数类型 */
+export type ConsumptionHistoryQuery = z.infer<
+  typeof consumptionHistoryQuerySchema
+>;
+
 /** POST /api/categories 请求体校验 */
 export const createCategoryBodySchema = z.object({
   /** 分类名称：必填非空 */

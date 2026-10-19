@@ -44,7 +44,7 @@ export function initSchema(sqlite: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS expiry_record (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      item_id     INTEGER NOT NULL REFERENCES item(id),
+      item_id     INTEGER REFERENCES item(id) ON DELETE SET NULL,
       event_type  TEXT NOT NULL,
       recorded_at INTEGER NOT NULL
     );

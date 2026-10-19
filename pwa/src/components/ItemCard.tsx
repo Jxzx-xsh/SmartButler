@@ -1,4 +1,5 @@
 import type { Item } from '../api/types';
+import { useConsumeItem } from '../hooks/useItems';
 import { formatDate } from '../lib/date';
 import { ExpiryBadge } from './ExpiryBadge';
 import styles from './ItemCard.module.css';
@@ -20,6 +21,9 @@ function cardTone(days: number | null): string {
 /** 单条物品卡片（看板与列表复用）。 */
 export function ItemCard({ item, onEdit, onDelete }: ItemCardProps) {
   const quantityText = `${item.quantity}${item.unit ?? ''}`;
+  const consume = useConsumeItem();
+  // 消耗请求进行中时禁用两个按钮，避免并发重复提交
+  const consuming = consume.isPending;
   return (
     <div className={`${styles.card} ${cardTone(item.daysUntilExpiry)}`}>
       <div className={styles.header}>
@@ -42,6 +46,24 @@ export function ItemCard({ item, onEdit, onDelete }: ItemCardProps) {
       </dl>
       {item.note && <p className={styles.note}>{item.note}</p>}
       <div className={styles.actions}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.consume}`}
+          disabled={consuming}
+          onClick={() => consume.mutate({ id: item.id, body: { quantity: 1 } })}
+        >
+          用掉 1
+        </button>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.consume}`}
+          disabled={consuming}
+          onClick={() =>
+            consume.mutate({ id: item.id, body: { quantity: item.quantity } })
+          }
+        >
+          用完
+        </button>
         <button type="button" className={styles.btn} onClick={() => onEdit(item)}>
           编辑
         </button>

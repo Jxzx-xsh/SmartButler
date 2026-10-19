@@ -6,13 +6,16 @@ import { createDb, type AppDatabase } from './client.js';
 import { initSchema } from './init.js';
 import { categories } from './schema.js';
 import {
+  consumeItem,
   createItem,
   deleteItem,
   getItem,
+  listConsumptionHistory,
   listExpiringItems,
   listItems,
   updateItem,
 } from './repository.js';
+import { expiryRecords } from './schema.js';
 import { MS_PER_DAY } from '../domain/expiry.js';
 
 // 固定基准时间
@@ -136,5 +139,104 @@ describe('listExpiringItems', () => {
   it('范围外物品不出现', () => {
     const rows = listExpiringItems(db, 3, NOW);
     expect(rows.some((r) => r.name === '苹果')).toBe(false);
+  });
+});
+
+/** 查 expiryRecords 总条数（断言是否留痕用） */
+function countExpiryRecords(): number {
+  return db.select().from(expiryRecords).all().length;
+}
+
+describe('consumeItem 消耗 / 用完登记', () => {
+  it('quantity>1 时默认减 1，item 保留且 expiryRecords +1', () => {
+    const item = createItem(db, { name: '酸奶', quantity: 3 });
+    const result = consumeItem(db, item.id);
+    expect(result?.quantity).toBe(2);
+    expect(getItem(db, item.id)?.quantity).toBe(2);
+    expect(countExpiryRecords()).toBe(1);
+  });
+
+  it('quantity=1 消耗后删除 item、返回 null，仍插一条记录', () => {
+    const item = createItem(db, { name: '牛奶', quantity: 1 });
+    const result = consumeItem(db, item.id);
+    expect(result).toBeNull();
+    expect(getItem(db, item.id)).toBeNull();
+    expect(countExpiryRecords()).toBe(1);
+  });
+
+  it('显式 quantity 一次减多个', () => {
+    const item = createItem(db, { name: '鸡蛋', quantity: 10 });
+    const result = consumeItem(db, item.id, { quantity: 4 });
+    expect(result?.quantity).toBe(6);
+    expect(countExpiryRecords()).toBe(1);
+  });
+
+  it('减量超过库存时归零即删除、返回 null', () => {
+    const item = createItem(db, { name: '面包', quantity: 2 });
+    const result = consumeItem(db, item.id, { quantity: 5 });
+    expect(result).toBeNull();
+    expect(getItem(db, item.id)).toBeNull();
+    expect(countExpiryRecords()).toBe(1);
+  });
+
+  it("eventType='discarded' 正确写入", () => {
+    const item = createItem(db, { name: '剩菜', quantity: 1 });
+    consumeItem(db, item.id, { eventType: 'discarded' });
+    const rows = db.select().from(expiryRecords).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.eventType).toBe('discarded');
+  });
+
+  it('不存在的 itemId 返回 null 且不插记录', () => {
+    const result = consumeItem(db, 9999);
+    expect(result).toBeNull();
+    expect(countExpiryRecords()).toBe(0);
+  });
+});
+
+describe('listConsumptionHistory', () => {
+  it('按 recordedAt 降序、leftJoin 取物品名、limit 生效', () => {
+    const a = createItem(db, { name: '牛奶', quantity: 5 });
+    const b = createItem(db, { name: '酸奶', quantity: 5 });
+
+    // 显式注入 recordedAt，保证排序稳定可断言
+    consumeItem(db, a.id, { recordedAt: NOW });
+    consumeItem(db, b.id, { recordedAt: NOW + 1000 });
+    consumeItem(db, a.id, { recordedAt: NOW + 2000 });
+
+    const rows = listConsumptionHistory(db);
+    expect(rows.map((r) => r.recordedAt)).toEqual([
+      NOW + 2000,
+      NOW + 1000,
+      NOW,
+    ]);
+    // join 出物品名称
+    expect(rows[0]?.itemName).toBe('牛奶');
+    expect(rows[1]?.itemName).toBe('酸奶');
+
+    // limit 生效
+    expect(listConsumptionHistory(db, { limit: 1 })).toHaveLength(1);
+  });
+
+  it('物品已删除后记录仍在、item_id 置 null、itemName 为 null', () => {
+    const item = createItem(db, { name: '牛奶', quantity: 1 });
+    // quantity=1 消耗后物品被删除（ON DELETE SET NULL），记录仍在且 item_id 置 null
+    consumeItem(db, item.id, { recordedAt: NOW });
+    const raw = db.select().from(expiryRecords).all();
+    expect(raw).toHaveLength(1);
+    expect(raw[0]?.itemId).toBeNull();
+    const rows = listConsumptionHistory(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.itemName).toBeNull();
+  });
+
+  it('按 itemId 过滤', () => {
+    const a = createItem(db, { name: '牛奶', quantity: 5 });
+    const b = createItem(db, { name: '酸奶', quantity: 5 });
+    consumeItem(db, a.id);
+    consumeItem(db, b.id);
+    const rows = listConsumptionHistory(db, { itemId: a.id });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.itemId).toBe(a.id);
   });
 });

@@ -69,10 +69,13 @@ export const items = sqliteTable('item', {
 export const expiryRecords = sqliteTable('expiry_record', {
   /** 自增主键 */
   id: integer('id').primaryKey({ autoIncrement: true }),
-  /** 物品外键 → item.id */
-  itemId: integer('item_id')
-    .notNull()
-    .references(() => items.id),
+  /**
+   * 物品外键 → item.id，可空。
+   * ON DELETE SET NULL：物品被删除（用完）后该消耗记录仍保留作留痕，item_id 自动置 null。
+   */
+  itemId: integer('item_id').references(() => items.id, {
+    onDelete: 'set null',
+  }),
   /** 事件类型：过期/已消耗/已丢弃 */
   eventType: text('event_type', {
     enum: ['expired', 'consumed', 'discarded'],

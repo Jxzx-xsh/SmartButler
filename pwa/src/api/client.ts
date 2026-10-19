@@ -1,6 +1,8 @@
 import type {
   CaptureStatus,
   Category,
+  ConsumeBody,
+  ConsumeResult,
   CreateItemBody,
   Item,
   ListItemsParams,
@@ -98,6 +100,8 @@ export const itemsApi = {
   update: (id: number, body: UpdateItemBody) =>
     request<Item>(`/api/items/${id}`, { method: 'PATCH', body }),
   remove: (id: number) => request<void>(`/api/items/${id}`, { method: 'DELETE' }),
+  consume: (id: number, body?: ConsumeBody) =>
+    request<ConsumeResult>(`/api/items/${id}/consume`, { method: 'POST', body: body ?? {} }),
 };
 
 /** 分类相关接口薄封装。 */

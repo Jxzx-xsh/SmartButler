@@ -22,6 +22,7 @@ import { ZodError } from 'zod';
 
 import { db as defaultDb, type AppDatabase } from './db/client.js';
 import { itemsRoutes } from './routes/items.js';
+import { consumptionRoutes } from './routes/consumption.js';
 import { categoriesRoutes } from './routes/categories.js';
 import { aiRoutes } from './routes/ai.js';
 import { voiceRoutes } from './routes/voice.js';
@@ -164,6 +165,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
 
   // 注入 db 注册业务路由
   app.register(itemsRoutes, { db });
+  // 物品消耗 / 用完登记路由（减库存/删除并留痕）
+  app.register(consumptionRoutes, { db });
   app.register(categoriesRoutes, { db });
   // 注入 LM Studio 客户端注册 AI 路由
   app.register(aiRoutes, { client: aiClient });

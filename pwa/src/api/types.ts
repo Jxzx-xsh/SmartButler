@@ -46,6 +46,20 @@ export interface CreateItemBody {
 /** 更新物品请求体：全部字段可选。 */
 export type UpdateItemBody = Partial<CreateItemBody>;
 
+/** 消耗 / 用完登记请求体：数量与事件类型均可选。 */
+export interface ConsumeBody {
+  quantity?: number;
+  eventType?: 'consumed' | 'discarded';
+}
+
+/** 消耗登记返回：item 为 null 表示已用完被移除。 */
+export interface ConsumeResult {
+  item: Item | null;
+  consumed: boolean;
+  depleted: boolean;
+  message: string;
+}
+
 /** 物品列表查询参数。 */
 export interface ListItemsParams {
   categoryId?: number;
