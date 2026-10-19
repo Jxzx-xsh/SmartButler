@@ -5,10 +5,11 @@ import { ExpiryBoard } from './components/ExpiryBoard';
 import { ItemFormModal } from './components/ItemFormModal';
 import { ItemList } from './components/ItemList';
 import { MonitorView } from './components/MonitorView';
+import { RecipeView } from './components/RecipeView';
 import { useDeleteItem } from './hooks/useItems';
 import styles from './App.module.css';
 
-type Tab = 'board' | 'all' | 'monitor';
+type Tab = 'board' | 'all' | 'monitor' | 'recipe';
 
 /** 顶层布局：标题 + 标签切换（到期看板 / 全部物品），统筹编辑与删除交互。 */
 export default function App() {
@@ -65,6 +66,13 @@ export default function App() {
         >
           监控
         </button>
+        <button
+          type="button"
+          className={`${styles.tab} ${tab === 'recipe' ? styles.tabActive : ''}`}
+          onClick={() => setTab('recipe')}
+        >
+          食谱
+        </button>
       </nav>
 
       <main className={styles.main}>
@@ -79,6 +87,7 @@ export default function App() {
           />
         )}
         {tab === 'monitor' && <MonitorView />}
+        {tab === 'recipe' && <RecipeView />}
       </main>
 
       {formTarget !== undefined && (

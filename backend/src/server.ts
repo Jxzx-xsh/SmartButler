@@ -22,6 +22,7 @@ import { createLmStudioClient } from './ai/lmstudio.js';
 import { createVisionParser } from './ai/vision-parser.js';
 import { createIntentClassifier } from './ai/intent-classifier.js';
 import { createItemParser } from './ai/item-parser.js';
+import { createRecipeRecommender } from './ai/recipe.js';
 import { createCommandRouter } from './commands/command-router.js';
 import { createVisionIngest } from './capture/vision-ingest.js';
 import { loadHaConfig, isHaConfigured } from './ha/config.js';
@@ -211,6 +212,12 @@ async function start(): Promise<void> {
     haConfig,
   });
 
+  // 食谱推荐器：复用 aiQueue 走即时队列（与 commandRouter 同范式），注入 buildApp。
+  const recipeRecommender = createRecipeRecommender({
+    client: createLmStudioClient(),
+    queue: aiQueue,
+  });
+
   let haSubscriber: HaEventSubscriber | undefined;
   if (isHaConfigured(haConfig)) {
     haSubscriber = createHaEventSubscriber({
@@ -245,6 +252,7 @@ async function start(): Promise<void> {
     talkSink,
     haClient,
     commandRouter,
+    recipeRecommender,
     ...(haSubscriber ? { haSubscriber } : {}),
   });
 

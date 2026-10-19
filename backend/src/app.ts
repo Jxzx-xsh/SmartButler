@@ -35,6 +35,8 @@ import { createIntentClassifier } from './ai/intent-classifier.js';
 import { createItemParser } from './ai/item-parser.js';
 import { createCommandRouter, type CommandRouter } from './commands/command-router.js';
 import { commandRoutes } from './routes/command.js';
+import { createRecipeRecommender, type RecipeRecommender } from './ai/recipe.js';
+import { recipeRoutes } from './routes/recipe.js';
 import {
   captureRoutes,
   createCaptureGatewayHolder,
@@ -103,6 +105,11 @@ export interface BuildAppOptions {
    * （不走队列）。server.ts 走 aiQueue 的即时队列，故由其构造同一实例注入。
    */
   commandRouter?: CommandRouter;
+  /**
+   * 注入的食谱推荐器，缺省基于 aiClient 现场构造（不走队列）。
+   * server.ts 复用 aiQueue 走即时队列，故由其构造同一实例注入。
+   */
+  recipeRecommender?: RecipeRecommender;
 }
 
 /**
@@ -211,6 +218,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       haConfig,
     });
   app.register(commandRoutes, { router: commandRouter });
+
+  // 食谱推荐路由：缺省现场构造推荐器（与 command 一致，不走队列），
+  // server.ts 复用 aiQueue 走即时队列，故可注入同一实例。
+  const recipeRecommender =
+    options.recipeRecommender ?? createRecipeRecommender({ client: aiClient });
+  app.register(recipeRoutes, { db, recommender: recipeRecommender });
 
   // 统一错误处理（error 由 Fastify 保证为 FastifyError，含 message/code/statusCode）
   app.setErrorHandler(

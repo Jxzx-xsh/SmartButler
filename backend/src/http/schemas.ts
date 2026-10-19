@@ -132,3 +132,11 @@ export const commandBodySchema = z.object({
 
 /** 解析后的指令请求体类型 */
 export type CommandBody = z.infer<typeof commandBodySchema>;
+
+/** GET /api/recipes/recommend 查询参数校验：days 默认 3，须为正整数 */
+export const recipeRecommendQuerySchema = z.object({
+  days: z.coerce.number().int().positive().default(3),
+});
+
+/** 解析后的食谱推荐查询参数类型 */
+export type RecipeRecommendQuery = z.infer<typeof recipeRecommendQuerySchema>;

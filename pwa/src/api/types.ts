@@ -67,6 +67,25 @@ export interface ListItemsParams {
   confirmed?: boolean;
 }
 
+/** 单道推荐菜谱（GET /api/recipes/recommend 返回）。 */
+export interface Recipe {
+  /** 菜名 */
+  name: string;
+  /** 用到的家里现有食材名 */
+  usedItems: string[];
+  /** 还缺少、需另购的食材名 */
+  missingItems?: string[];
+  /** 简要做法步骤 */
+  steps?: string[];
+  /** 备注 */
+  note?: string;
+}
+
+/** 食谱推荐结果。 */
+export interface RecipeResult {
+  recipes: Recipe[];
+}
+
 /** 后端错误响应体。 */
 export interface ApiErrorBody {
   error: {

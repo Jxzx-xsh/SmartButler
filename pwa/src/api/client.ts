@@ -6,6 +6,7 @@ import type {
   CreateItemBody,
   Item,
   ListItemsParams,
+  RecipeResult,
   UpdateItemBody,
 } from './types';
 
@@ -102,6 +103,13 @@ export const itemsApi = {
   remove: (id: number) => request<void>(`/api/items/${id}`, { method: 'DELETE' }),
   consume: (id: number, body?: ConsumeBody) =>
     request<ConsumeResult>(`/api/items/${id}/consume`, { method: 'POST', body: body ?? {} }),
+};
+
+/** 食谱推荐相关接口薄封装。 */
+export const recipesApi = {
+  /** 基于家里食材推荐家常菜（days 控制临期判定窗口，缺省后端默认 3）。 */
+  recommend: (days?: number) =>
+    request<RecipeResult>('/api/recipes/recommend', { query: { days } }),
 };
 
 /** 分类相关接口薄封装。 */
