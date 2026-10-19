@@ -28,6 +28,8 @@ import { createVisionIngest } from './capture/vision-ingest.js';
 import { loadHaConfig, isHaConfigured } from './ha/config.js';
 import { createHaClient } from './ha/ha-client.js';
 import { createHaEventSubscriber, type HaEventSubscriber } from './ha/ha-events.js';
+import { createReminderScheduler } from './reminders/reminder-scheduler.js';
+import { loadReminderConfig } from './reminders/config.js';
 
 /**
  * 由上传 mimetype 粗略推断音频扩展名（仅用于临时文件命名，非严谨解析）。
@@ -256,6 +258,20 @@ async function start(): Promise<void> {
     ...(haSubscriber ? { haSubscriber } : {}),
   });
 
+  // 主动到期提醒调度器：复用同一 db + haClient + haConfig，按可配置间隔定时检查临期物品，
+  // HA 已配置则更新传感器，无论是否配置都落 eventLog(source='reminder')。
+  const reminderScheduler = createReminderScheduler({
+    db,
+    haClient,
+    haConfig,
+    config: loadReminderConfig(),
+  });
+
+  // 提醒调度器进程关闭时停止（stop 同步 clearInterval，不挂起）
+  app.addHook('onClose', async () => {
+    reminderScheduler.stop();
+  });
+
   // HA WS 订阅器进程关闭时停止（可靠 resolve 不挂起）
   if (haSubscriber) {
     const sub = haSubscriber;
@@ -290,6 +306,14 @@ async function start(): Promise<void> {
     } catch (err) {
       console.error('[ha] WS 订阅启动失败（后端继续运行）：', err);
     }
+  }
+
+  // 容错拉起提醒调度器：启动失败只记日志，绝不阻塞/中断后端进程（对齐采集网关/HA 订阅容错）
+  try {
+    reminderScheduler.start();
+    console.log('[reminder] 主动到期提醒调度器已启动');
+  } catch (err) {
+    console.error('[reminder] 提醒调度器启动失败（后端继续运行）：', err);
   }
 
   // 配置了采集源才自动启动；启动失败只记日志，绝不阻塞/中断后端进程
