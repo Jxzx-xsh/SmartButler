@@ -9,7 +9,7 @@
 }
 
 .label {
-  font-size: 13px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
 }
 
@@ -21,17 +21,19 @@
 .input,
 .textarea {
   width: 100%;
-  padding: 9px 11px;
+  padding: 11px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .input:focus,
 .textarea:focus {
   outline: none;
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .textarea {
@@ -47,13 +49,13 @@
 .fieldset {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: 14px;
   display: grid;
   gap: 12px;
 }
 
 .legend {
-  font-size: 13px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
   padding: 0 6px;
 }
@@ -67,13 +69,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 14px;
+  font-size: var(--font-body);
 }
 
 .error {
   margin: 0;
   color: var(--color-danger);
-  font-size: 13px;
+  font-size: var(--font-footnote);
 }
 
 .actions {
@@ -85,15 +87,17 @@
 
 .cancel,
 .submit {
-  padding: 9px 20px;
+  padding: 11px 20px;
+  min-height: 44px;
   border-radius: var(--radius);
-  font-size: 14px;
-  border: 1px solid var(--color-border);
+  font-size: var(--font-body);
+  font-weight: 600;
+  border: 1px solid transparent;
 }
 
 .cancel {
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--color-fill);
+  color: var(--color-primary);
 }
 
 .submit {

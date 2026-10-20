@@ -6,7 +6,7 @@
 }
 
 .toolbarLabel {
-  font-size: 14px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
 }
 
@@ -16,12 +16,16 @@
 }
 
 .tab {
-  padding: 6px 16px;
+  padding: 7px 16px;
   border-radius: 999px;
-  font-size: 14px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  font-size: var(--font-footnote);
+  font-weight: 600;
+  min-height: 34px;
+  border: 1px solid transparent;
+  background: var(--color-fill);
   color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease,
+    transform 0.15s ease;
 }
 
 .tabActive {
@@ -32,5 +36,5 @@
 
 .list {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }

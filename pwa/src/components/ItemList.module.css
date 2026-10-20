@@ -13,24 +13,33 @@
 }
 
 .filterLabel {
-  font-size: 12px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
 }
 
 .control {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text);
   width: 100%;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.control:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .addBtn {
   flex: 0 0 auto;
-  padding: 9px 18px;
+  padding: 10px 18px;
+  min-height: 44px;
   border-radius: var(--radius);
-  font-size: 14px;
+  font-size: var(--font-body);
+  font-weight: 600;
   background: var(--color-primary);
   color: #fff;
   border: 1px solid var(--color-primary);
@@ -38,5 +47,5 @@
 
 .list {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }

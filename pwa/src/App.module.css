@@ -9,39 +9,57 @@
 .header {
   background: var(--color-primary);
   color: #fff;
-  padding: 16px;
-  padding-top: max(16px, env(safe-area-inset-top));
+  padding: 20px 16px;
+  padding-top: max(20px, env(safe-area-inset-top));
 }
 
 .title {
-  font-size: 20px;
+  font-size: var(--font-title);
   font-weight: 700;
+  letter-spacing: 0.2px;
 }
 
 .subtitle {
-  margin: 2px 0 0;
-  font-size: 13px;
+  margin: 3px 0 0;
+  font-size: var(--font-footnote);
   opacity: 0.85;
 }
 
 .tabbar {
   display: flex;
-  background: var(--color-surface);
+  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
   border-bottom: 1px solid var(--color-border);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
+/* 不支持 backdrop-filter 时降级为不透明底 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .tabbar {
+    background: var(--color-surface);
+  }
+}
+
 .tab {
   flex: 1;
   padding: 14px 0;
   text-align: center;
-  font-size: 15px;
+  font-size: var(--font-body);
+  min-height: 44px;
   border: none;
   background: transparent;
   color: var(--color-text-soft);
   border-bottom: 2px solid transparent;
+  border-radius: 2px;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+/* tab 为导航控件，不做按压缩放 */
+.tab:active {
+  transform: none;
 }
 
 .tabActive {

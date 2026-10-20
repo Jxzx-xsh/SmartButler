@@ -14,20 +14,45 @@
   --color-muted: #78909c; /* 无到期日：灰 */
   --color-muted-bg: #eceff1;
 
-  /* 中性色 */
-  --color-text: #1f2a2e;
-  --color-text-soft: #566066;
-  --color-border: #e0e4e7;
-  --color-bg: #f5f7f6;
-  --color-surface: #ffffff;
+  /* 中性色（向 iOS 系统灰靠拢） */
+  --color-text: #1c1c1e; /* iOS label */
+  --color-text-soft: #6c6c70; /* iOS secondaryLabel */
+  --color-text-tertiary: #8e8e93; /* iOS tertiaryLabel（更弱说明文字） */
+  --color-border: #e5e5ea; /* iOS separator */
+  --color-bg: #f2f2f7; /* iOS systemGroupedBackground */
+  --color-surface: #ffffff; /* 卡片纯白 */
 
-  --radius: 12px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  /* 中性填充底（替换写死 rgba 叠底，暗色自动适配） */
+  --color-fill: rgba(120, 120, 128, 0.12); /* iOS tertiarySystemFill 感 */
+
+  /* 圆角层级 */
+  --radius: 12px; /* 通用卡片/按钮基准 */
+  --radius-sm: 8px; /* 小元素：note 叠底、tag 等 */
+  --radius-lg: 18px; /* 大卡片 / 模态 / sheet */
+
+  /* 阴影层级（iOS 柔和、低对比） */
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.16);
+
+  /* 间距层级（统一约定，非强制全替换） */
+  --space-card: 16px;
+  --space-group: 20px;
+
+  /* 字号层级（iOS 层级感） */
+  --font-large-title: 28px;
+  --font-title: 20px;
+  --font-headline: 17px;
+  --font-body: 15px;
+  --font-footnote: 13px;
+
   --max-width: 640px;
 
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Microsoft YaHei', Roboto, sans-serif;
   color: var(--color-text);
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
 }
 
 * {
@@ -40,6 +65,7 @@ body {
   padding: 0;
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
+  -webkit-overflow-scrolling: touch;
 }
 
 #root {
@@ -49,6 +75,12 @@ body {
 button {
   font-family: inherit;
   cursor: pointer;
+  transition: transform 0.15s ease, background-color 0.2s ease,
+    border-color 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
+}
+
+button:active {
+  transform: scale(0.97);
 }
 
 input,
@@ -62,4 +94,51 @@ h1,
 h2,
 h3 {
   margin: 0;
+}
+
+/* 暗色模式：跟随系统，仅覆盖 token 值，组件自动适配 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* 主题色（深底提亮保对比，保持绿调） */
+    --color-primary: #4cae50;
+    --color-primary-dark: #1b5e20;
+    --color-primary-light: #1e3a24;
+
+    /* 临期配色（文字提亮、bg 改深色低饱和底） */
+    --color-danger: #ff6961;
+    --color-danger-bg: rgba(255, 69, 58, 0.18);
+    --color-warn: #ff9f0a;
+    --color-warn-bg: rgba(255, 159, 10, 0.18);
+    --color-ok: #4cae50;
+    --color-ok-bg: rgba(48, 209, 88, 0.16);
+    --color-muted: #98989d;
+    --color-muted-bg: rgba(120, 120, 128, 0.24);
+
+    /* 中性色 */
+    --color-text: #ffffff;
+    --color-text-soft: #aeaeb2;
+    --color-text-tertiary: #8e8e93;
+    --color-border: #38383a;
+    --color-bg: #000000;
+    --color-surface: #1c1c1e;
+
+    /* 填充底（暗色更亮） */
+    --color-fill: rgba(120, 120, 128, 0.24);
+
+    /* 阴影（暗色下更隐蔽，偏深） */
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.6);
+  }
+}
+
+/* 尊重减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

@@ -3,13 +3,13 @@
   gap: 16px;
 }
 
-/* 画面区：16:9 黑底，画面等比内缩 */
+/* 画面区：16:9 黑底，画面等比内缩（视频区恒黑，保留 #000） */
 .screen {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -36,7 +36,7 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px;
   box-shadow: var(--shadow);
 }
 
@@ -45,7 +45,7 @@
   grid-template-columns: auto 1fr;
   gap: 6px 16px;
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-body);
 }
 
 .statusGrid dt {
@@ -63,30 +63,31 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px;
   box-shadow: var(--shadow);
   display: grid;
   gap: 8px;
 }
 
 .label {
-  font-size: 12px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
 }
 
 .input {
   width: 100%;
-  padding: 9px 11px;
+  padding: 11px 12px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text);
-  font-size: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .input:focus {
   outline: none;
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent);
 }
 
 .btnRow {
@@ -99,9 +100,11 @@
 .btn {
   flex: 1 1 auto;
   min-width: 96px;
-  padding: 9px 16px;
+  padding: 11px 16px;
+  min-height: 44px;
   border-radius: var(--radius);
-  font-size: 14px;
+  font-size: var(--font-body);
+  font-weight: 600;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
@@ -129,36 +132,36 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px;
   box-shadow: var(--shadow);
   display: grid;
   gap: 8px;
 }
 
 .sectionTitle {
-  font-size: 14px;
+  font-size: var(--font-body);
   font-weight: 600;
   color: var(--color-text);
 }
 
 .note {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-footnote);
   color: var(--color-text-soft);
-  background: rgba(0, 0, 0, 0.03);
+  background: var(--color-fill);
   padding: 8px 10px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   line-height: 1.5;
 }
 
 .hintError {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-footnote);
   color: var(--color-danger);
 }
 
 .hintOk {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-footnote);
   color: var(--color-ok);
 }
