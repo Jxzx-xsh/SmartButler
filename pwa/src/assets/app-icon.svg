@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17C7D6" />
+      <stop offset="1" stop-color="#1877C0" />
+    </linearGradient>
+  </defs>
+
+  <!-- iOS 圆角方形底（圆角 ≈ 22% = 112px），青→蓝渐变 -->
+  <rect x="0" y="0" width="512" height="512" rx="112" ry="112" fill="url(#brand)" />
+
+  <!-- 中央白色叶片：左瓣（亮层 0.95） -->
+  <path
+    d="M256 120
+       C176 160 140 248 150 360
+       C236 356 300 300 316 220
+       C322 186 300 148 256 120 Z"
+    fill="#FFFFFF" fill-opacity="0.95" />
+
+  <!-- 右瓣（层次：0.70） -->
+  <path
+    d="M256 120
+       C336 160 372 248 362 360
+       C276 356 212 300 196 220
+       C190 186 212 148 256 120 Z"
+    fill="#FFFFFF" fill-opacity="0.70" />
+
+  <!-- 中脉（主叶脉） + 侧脉，青蓝色透出层次 -->
+  <g fill="none" stroke="#1877C0" stroke-opacity="0.55" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M256 128 L256 356" />
+    <path d="M256 200 L210 176" />
+    <path d="M256 200 L302 176" />
+    <path d="M256 258 L202 230" />
+    <path d="M256 258 L310 230" />
+    <path d="M256 312 L212 288" />
+    <path d="M256 312 L300 288" />
+  </g>
+
+  <!-- 底部小圆点 -->
+  <circle cx="256" cy="402" r="20" fill="#FFFFFF" fill-opacity="0.95" />
+</svg>

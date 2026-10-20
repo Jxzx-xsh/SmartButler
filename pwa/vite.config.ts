@@ -8,19 +8,36 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icon-192.png', 'icon-512.png', 'icon-512-maskable.png'],
+      includeAssets: [
+        'icon-192.png',
+        'icon-512.png',
+        'icon-512-maskable.png',
+        'apple-touch-icon.png',
+        'favicon.svg',
+        'favicon-32.png',
+      ],
       manifest: {
         name: 'SmartButler 家庭管家',
         short_name: 'SmartButler',
         description: '家庭食材/物品管理与到期提醒',
         lang: 'zh-CN',
-        theme_color: '#2e7d32',
-        background_color: '#ffffff',
+        theme_color: '#0FB8C9',
+        background_color: '#F2F8FA',
         display: 'standalone',
         start_url: '/',
         icons: [
-          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: 'icon-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: 'icon-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any',
+          },
           {
             src: 'icon-512-maskable.png',
             sizes: '512x512',

@@ -24,7 +24,7 @@
 }
 
 .placeholder {
-  color: #cfd8dc;
+  color: #cfd8dc; /* 位于恒黑视频区（.screen #000）内，固定浅灰以保证对比，不随主题 */
   font-size: 14px;
   text-align: center;
   padding: 0 24px;

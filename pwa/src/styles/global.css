@@ -1,36 +1,38 @@
 :root {
-  /* 主题色 */
-  --color-primary: #2e7d32;
-  --color-primary-dark: #1b5e20;
-  --color-primary-light: #e8f5e9;
+  /* 主题色（清爽蓝青：主色青 → 深蓝） */
+  --color-primary: #0fb8c9; /* 品牌主色：青 */
+  --color-primary-dark: #1877c0; /* 渐变终点：蓝 */
+  --color-primary-darker: #0a5e8a; /* 更深蓝 */
+  --color-primary-light: #def1f4; /* 浅底 */
+  --gradient-brand: linear-gradient(135deg, #17c7d6, #1877c0); /* 头部/主按钮青→蓝渐变 */
 
-  /* 临期配色 */
-  --color-danger: #d32f2f; /* 已过期：红 */
-  --color-danger-bg: #fdecea;
-  --color-warn: #ef6c00; /* 今明两天：橙 */
-  --color-warn-bg: #fff3e0;
-  --color-ok: #2e7d32; /* 较远：绿 */
-  --color-ok-bg: #e8f5e9;
-  --color-muted: #78909c; /* 无到期日：灰 */
-  --color-muted-bg: #eceff1;
+  /* 到期配色（柔和） */
+  --color-danger: #e5484d; /* 已过期：红 */
+  --color-danger-bg: #fdedec;
+  --color-warn: #f5a623; /* 临期：琥珀 */
+  --color-warn-bg: #fff4e5;
+  --color-ok: #12a594; /* 新鲜：青绿（与主色蓝青区分） */
+  --color-ok-bg: #e3f6f0;
+  --color-muted: #8696a0; /* 无到期日：冷灰 */
+  --color-muted-bg: #eef1f3;
 
-  /* 中性色（向 iOS 系统灰靠拢） */
-  --color-text: #1c1c1e; /* iOS label */
-  --color-text-soft: #6c6c70; /* iOS secondaryLabel */
-  --color-text-tertiary: #8e8e93; /* iOS tertiaryLabel（更弱说明文字） */
-  --color-border: #e5e5ea; /* iOS separator */
-  --color-bg: #f2f2f7; /* iOS systemGroupedBackground */
+  /* 中性色（冷调） */
+  --color-text: #15242a; /* 主文字 */
+  --color-text-soft: #5a6b72; /* 次文字 */
+  --color-text-tertiary: #8696a0; /* 更弱说明文字（冷灰） */
+  --color-border: #e2ecef; /* 偏冷灰边框 */
+  --color-bg: #f2f8fa; /* 页面浅冷底（body 渐变起点） */
   --color-surface: #ffffff; /* 卡片纯白 */
 
-  /* 中性填充底（替换写死 rgba 叠底，暗色自动适配） */
-  --color-fill: rgba(120, 120, 128, 0.12); /* iOS tertiarySystemFill 感 */
+  /* 中性填充底（冷灰微调，暗色自动适配） */
+  --color-fill: rgba(90, 107, 114, 0.1);
 
   /* 圆角层级 */
   --radius: 12px; /* 通用卡片/按钮基准 */
   --radius-sm: 8px; /* 小元素：note 叠底、tag 等 */
   --radius-lg: 18px; /* 大卡片 / 模态 / sheet */
 
-  /* 阴影层级（iOS 柔和、低对比） */
+  /* 阴影层级（柔和、低对比） */
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.16);
@@ -39,7 +41,7 @@
   --space-card: 16px;
   --space-group: 20px;
 
-  /* 字号层级（iOS 层级感） */
+  /* 字号层级 */
   --font-large-title: 28px;
   --font-title: 20px;
   --font-headline: 17px;
@@ -63,7 +65,9 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--color-bg);
+  /* 页面底色：冷调微渐变（组件仍引用 --color-bg） */
+  background: linear-gradient(180deg, #f2f8fa 0%, #e4eff2 100%);
+  background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -webkit-overflow-scrolling: touch;
 }
@@ -99,36 +103,44 @@ h3 {
 /* 暗色模式：跟随系统，仅覆盖 token 值，组件自动适配 */
 @media (prefers-color-scheme: dark) {
   :root {
-    /* 主题色（深底提亮保对比，保持绿调） */
-    --color-primary: #4cae50;
-    --color-primary-dark: #1b5e20;
-    --color-primary-light: #1e3a24;
+    /* 主题色（深底提亮保对比，亮青调） */
+    --color-primary: #36d6e6;
+    --color-primary-dark: #2bc4d4;
+    --color-primary-darker: #0a5e8a;
+    --color-primary-light: #0d2a30;
+    --gradient-brand: linear-gradient(135deg, #2bc4d4, #1877c0);
 
-    /* 临期配色（文字提亮、bg 改深色低饱和底） */
-    --color-danger: #ff6961;
-    --color-danger-bg: rgba(255, 69, 58, 0.18);
-    --color-warn: #ff9f0a;
-    --color-warn-bg: rgba(255, 159, 10, 0.18);
-    --color-ok: #4cae50;
-    --color-ok-bg: rgba(48, 209, 88, 0.16);
-    --color-muted: #98989d;
-    --color-muted-bg: rgba(120, 120, 128, 0.24);
+    /* 到期配色（文字提亮、bg 改深色低饱和底） */
+    --color-danger: #f58a8d;
+    --color-danger-bg: #3a1a1c;
+    --color-warn: #f5c06b;
+    --color-warn-bg: #3a2a12;
+    --color-ok: #4fd6c0; /* 新鲜青绿（与主色亮青 #36D6E6 区分） */
+    --color-ok-bg: #12332e;
+    --color-muted: #8696a0;
+    --color-muted-bg: rgba(134, 150, 160, 0.2);
 
     /* 中性色 */
-    --color-text: #ffffff;
-    --color-text-soft: #aeaeb2;
-    --color-text-tertiary: #8e8e93;
-    --color-border: #38383a;
-    --color-bg: #000000;
-    --color-surface: #1c1c1e;
+    --color-text: #eaf2f4;
+    --color-text-soft: #8696a0;
+    --color-text-tertiary: #6e7f86;
+    --color-border: #223238;
+    --color-bg: #0c1619; /* 暗色页面底（容器渐变起点） */
+    --color-surface: #16262b;
 
     /* 填充底（暗色更亮） */
-    --color-fill: rgba(120, 120, 128, 0.24);
+    --color-fill: rgba(134, 150, 160, 0.2);
 
     /* 阴影（暗色下更隐蔽，偏深） */
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.6);
+  }
+
+  /* 暗色页面底色：深冷调微渐变 */
+  html,
+  body {
+    background: linear-gradient(180deg, #0c1619 0%, #0f1e22 100%);
   }
 }
 
