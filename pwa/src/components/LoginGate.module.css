@@ -1,0 +1,89 @@
+/* 全屏遮罩：用页面底色铺满，居中登录卡片。 */
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  padding-top: max(24px, env(safe-area-inset-top));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  background: var(--color-bg);
+}
+
+.card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px 24px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 品牌标题：蓝青渐变文字。 */
+.brand {
+  font-size: var(--font-title);
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hint {
+  margin: -6px 0 2px;
+  font-size: var(--font-footnote);
+  color: var(--color-text-soft);
+}
+
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 16px; /* 避免移动端聚焦缩放 */
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  min-height: 44px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.error {
+  margin: 0;
+  font-size: var(--font-footnote);
+  color: var(--color-danger);
+}
+
+/* 主按钮：蓝青渐变。 */
+.button {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px 16px;
+  min-height: 44px;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: #fff;
+  background: var(--gradient-brand);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

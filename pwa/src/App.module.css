@@ -17,10 +17,36 @@
   padding-top: max(20px, env(safe-area-inset-top));
 }
 
+.headerTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .title {
   font-size: var(--font-title);
   font-weight: 700;
   letter-spacing: 0.2px;
+}
+
+/* 登出按钮：header 右侧，半透明白底描边，触控友好。 */
+.logout {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 8px 16px;
+  font-size: var(--font-footnote);
+  font-weight: 600;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.logout:hover {
+  background: rgba(255, 255, 255, 0.26);
 }
 
 .subtitle {

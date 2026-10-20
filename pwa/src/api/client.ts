@@ -30,6 +30,29 @@ export class ApiError extends Error {
   }
 }
 
+/** 访问 token 在 localStorage 的存储键。 */
+const TOKEN_KEY = 'smartbutler_token';
+
+/** 读取当前访问 token（未登录返回 null）。 */
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+/** 存入访问 token。 */
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+/** 清除访问 token。 */
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+/** 是否已登录（持有 token）。 */
+export function isAuthed(): boolean {
+  return getToken() !== null;
+}
+
 interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -53,16 +76,29 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const { method = 'GET', body, query } = options;
   const url = `${API_BASE}${path}${buildQuery(query)}`;
 
+  // 组装请求头：有 body 带 Content-Type，有 token 带 Authorization（二者可并存）。
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   let res: Response;
   try {
     res = await fetch(url, {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
     // 网络层失败（后端未启动 / 跨域 / 断网）
     throw new ApiError('无法连接服务器，请确认后端已启动', 0);
+  }
+
+  // 未授权：清 token 并广播登出事件，供顶层回到登录页；仍抛错让调用方感知。
+  if (res.status === 401) {
+    clearToken();
+    window.dispatchEvent(new Event('smartbutler:unauthorized'));
+    throw await toApiError(res);
   }
 
   if (!res.ok) {
@@ -72,6 +108,35 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   // 204 无响应体
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/**
+ * 鉴权相关接口薄封装：登录换 token、登出清 token。
+ * 登录请求本身不要求已有 token（走原生 fetch，避免携带旧 token 干扰）。
+ */
+export async function login(password: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+  } catch {
+    throw new ApiError('无法连接服务器，请确认后端已启动', 0);
+  }
+
+  if (!res.ok) {
+    throw await toApiError(res);
+  }
+
+  const data = (await res.json()) as { token: string; expiresAt: number };
+  setToken(data.token);
+}
+
+/** 登出：清除本地 token。 */
+export function logout(): void {
+  clearToken();
 }
 
 /** 从非 2xx 响应解析统一错误体 { error: { message, code? } }，兜底状态码提示。 */
@@ -131,10 +196,21 @@ export const captureApi = {
     request<CaptureStatus>('/api/capture/start', { method: 'POST', body }),
   /** 停止采集，返回最新状态。 */
   stop: () => request<CaptureStatus>('/api/capture/stop', { method: 'POST' }),
-  /** MJPEG 实时流地址，直接喂给 <img src>。 */
-  streamUrl: () => `${API_BASE}/api/capture/stream`,
-  /** 最近一帧快照地址，带时间戳防缓存。 */
-  snapshotUrl: () => `${API_BASE}/api/capture/snapshot?t=${Date.now()}`,
+  /** MJPEG 实时流地址，直接喂给 <img src>；<img> 无法带头，故有 token 时拼 query。 */
+  streamUrl: () => {
+    const token = getToken();
+    return token
+      ? `${API_BASE}/api/capture/stream?token=${encodeURIComponent(token)}`
+      : `${API_BASE}/api/capture/stream`;
+  },
+  /** 最近一帧快照地址，带时间戳防缓存；有 token 时额外拼 token query。 */
+  snapshotUrl: () => {
+    const token = getToken();
+    const q = `t=${Date.now()}`;
+    return token
+      ? `${API_BASE}/api/capture/snapshot?${q}&token=${encodeURIComponent(token)}`
+      : `${API_BASE}/api/capture/snapshot?${q}`;
+  },
   /**
    * 上传通话录音（方案 A 仅上行留存）。走原生 fetch + FormData 发 multipart，
    * 不经 JSON request 封装；复用 ApiError 风格做错误处理。
@@ -143,14 +219,26 @@ export const captureApi = {
     const form = new FormData();
     form.append('audio', blob, 'talk.webm');
 
+    // 发 FormData 时不手设 Content-Type（交给浏览器带 boundary），仅在有 token 时加 Authorization。
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
     let res: Response;
     try {
       res = await fetch(`${API_BASE}/api/capture/talk`, {
         method: 'POST',
+        headers,
         body: form,
       });
     } catch {
       throw new ApiError('无法连接服务器，请确认后端已启动', 0);
+    }
+
+    if (res.status === 401) {
+      clearToken();
+      window.dispatchEvent(new Event('smartbutler:unauthorized'));
+      throw await toApiError(res);
     }
 
     if (!res.ok) {
