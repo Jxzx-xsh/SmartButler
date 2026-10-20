@@ -10,8 +10,13 @@ import type {
   UpdateItemBody,
 } from './types';
 
-/** API 基地址：优先环境变量，默认本地 Fastify。 */
-export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8820';
+/**
+ * API 基地址：默认空字符串，使所有请求走【相对路径】（如 /api/items），跟随当前域名，
+ * 由 Vite dev/preview 的 proxy 把 /api 转发到后端（见 vite.config.ts server.proxy）。
+ * 这样通过内网穿透域名（如 www.xushihu.com）访问时，前端只需暴露一个入口，无需单独暴露后端端口。
+ * 如需直连某个后端地址（如本地脚本调试），可用环境变量 VITE_API_BASE 覆盖为绝对地址。
+ */
+export const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
 /** 携带中文可读信息的 API 错误。 */
 export class ApiError extends Error {
