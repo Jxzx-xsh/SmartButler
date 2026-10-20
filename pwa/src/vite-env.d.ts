@@ -2,7 +2,7 @@
 /// <reference types="vite-plugin-pwa/client" />
 
 interface ImportMetaEnv {
-  /** 后端 API 基地址，默认 http://localhost:3000 */
+  /** 后端 API 基地址，默认 http://localhost:8820 */
   readonly VITE_API_BASE?: string;
 }
 

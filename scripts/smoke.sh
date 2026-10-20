@@ -18,8 +18,8 @@ set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-# 端口：优先取环境变量 SMARTBUTLER_PORT，默认 3000（与后端默认一致）
-PORT="${SMARTBUTLER_PORT:-3000}"
+# 端口：优先取环境变量 SMARTBUTLER_PORT，默认 8820（与后端默认一致）
+PORT="${SMARTBUTLER_PORT:-8820}"
 BASE="http://127.0.0.1:${PORT}"
 LOG_FILE="/tmp/sb_smoke_backend.log"
 

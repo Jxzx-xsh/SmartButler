@@ -4,6 +4,18 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vite.dev/config/
 export default defineConfig({
+  // SmartButler 前端固定端口 8821（后端为 8820），避开 3000/5173 等常见默认端口的冲突。
+  // host 开启便于局域网/手机访问；strictPort 确保端口被占时直接报错而非静默换端口。
+  server: {
+    port: 8821,
+    host: true,
+    strictPort: true,
+  },
+  preview: {
+    port: 8821,
+    host: true,
+    strictPort: true,
+  },
   plugins: [
     react(),
     VitePWA({

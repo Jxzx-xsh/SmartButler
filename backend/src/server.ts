@@ -3,7 +3,7 @@
  *
  * 用 buildApp() 构建应用并 listen：
  * - 启动前确保数据库表存在（initSchema）；
- * - 端口从 SMARTBUTLER_PORT 读取，默认 3000；host 0.0.0.0；
+ * - 端口从 SMARTBUTLER_PORT 读取，默认 8820；host 0.0.0.0；
  * - 仅在作为脚本直接执行时启动（被 import 时不触发）。
  */
 
@@ -291,7 +291,8 @@ async function start(): Promise<void> {
     await captureGateway.stop();
   });
 
-  const port = Number(process.env.SMARTBUTLER_PORT ?? 3000);
+  // SmartButler 专属默认端口 8820（前端 8821），避开 3000/5173 等常见默认端口冲突；可用 SMARTBUTLER_PORT 覆盖。
+  const port = Number(process.env.SMARTBUTLER_PORT ?? 8820);
   const host = '0.0.0.0';
 
   await app.listen({ port, host });

@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 /** API 基地址：优先环境变量，默认本地 Fastify。 */
-export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000';
+export const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8820';
 
 /** 携带中文可读信息的 API 错误。 */
 export class ApiError extends Error {
