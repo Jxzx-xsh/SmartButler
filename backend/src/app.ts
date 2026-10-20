@@ -52,9 +52,17 @@ import { createGatingController, type GatingController } from './gating/gating.j
 import { createMotionDetector } from './gating/motion.js';
 import { createVad } from './gating/vad.js';
 import { loadGatingConfig } from './gating/config.js';
+import { loadAuthConfig, type AuthConfig } from './auth/config.js';
+import { createAuthHook } from './auth/hook.js';
+import { authRoutes } from './routes/auth.js';
 
 /** buildApp 选项 */
 export interface BuildAppOptions {
+  /**
+   * 注入的访问鉴权配置，缺省基于 loadAuthConfig() 读取。
+   * 控制全局 onRequest 鉴权钩子与登录端点行为（测试可注入启用态配置）。
+   */
+  authConfig?: AuthConfig;
   /** 注入的数据库实例，缺省使用 client.ts 的默认 db */
   db?: AppDatabase;
   /** 注入的 LM Studio 客户端，缺省调用 createLmStudioClient() */
@@ -169,6 +177,17 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(cors, { origin: true });
   // multipart：语音入库端点接收上传音频，限制单文件 25MB
   app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
+
+  // 访问鉴权：缺省基于环境变量读取配置。在所有业务路由注册之前挂全局 onRequest
+  // 钩子（钩子内按 isAuthEnabled 决定是否拦截，未配置密码时全放行）。
+  const authConfig = options.authConfig ?? loadAuthConfig();
+  app.addHook('onRequest', createAuthHook(authConfig));
+
+  // 健康端点：唯一免 token 的健康检查，仅返回 {ok:true}，不泄露任何敏感信息
+  app.get('/api/health', async () => ({ ok: true }));
+
+  // 登录端点：注入鉴权配置，校验密码后签发无状态 token
+  app.register(authRoutes, { config: authConfig });
 
   // 注入 db 注册业务路由
   app.register(itemsRoutes, { db });

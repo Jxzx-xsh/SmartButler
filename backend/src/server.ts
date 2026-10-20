@@ -30,6 +30,7 @@ import { createHaClient } from './ha/ha-client.js';
 import { createHaEventSubscriber, type HaEventSubscriber } from './ha/ha-events.js';
 import { createReminderScheduler } from './reminders/reminder-scheduler.js';
 import { loadReminderConfig } from './reminders/config.js';
+import { loadAuthConfig, isAuthEnabled } from './auth/config.js';
 
 /**
  * 由上传 mimetype 粗略推断音频扩展名（仅用于临时文件命名，非严谨解析）。
@@ -244,8 +245,11 @@ async function start(): Promise<void> {
     });
   }
 
+  // 访问鉴权配置：从环境变量读取，注入 buildApp 供全局鉴权钩子与登录端点使用。
+  const authConfig = loadAuthConfig();
+
   // 同一门控实例 + 视觉入库管线 + 帧广播器 + 通话留存回调 + HA 客户端/订阅器
-  // 注入 app（供路由/状态读取与接线）
+  // + 鉴权配置注入 app（供路由/状态读取与接线）
   const app = buildApp({
     captureGateway,
     gatingController,
@@ -255,6 +259,7 @@ async function start(): Promise<void> {
     haClient,
     commandRouter,
     recipeRecommender,
+    authConfig,
     ...(haSubscriber ? { haSubscriber } : {}),
   });
 
@@ -297,6 +302,13 @@ async function start(): Promise<void> {
 
   await app.listen({ port, host });
   console.log(`[server] SmartButler 后端已启动：http://${host}:${port}`);
+
+  // 鉴权状态提示（绝不打印密码值）：启用则确认，未启用则警告对外无保护
+  if (isAuthEnabled(authConfig)) {
+    console.log('[auth] 访问鉴权已启用');
+  } else {
+    console.warn('[auth] 警告：未设置访问密码或鉴权已关闭，接口对外无保护');
+  }
 
   // HA 已配置才容错拉起 WS 订阅：连不上只记日志，绝不阻塞/中断后端启动（对齐采集网关）
   if (haSubscriber) {

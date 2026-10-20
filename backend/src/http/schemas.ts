@@ -133,6 +133,15 @@ export const commandBodySchema = z.object({
 /** 解析后的指令请求体类型 */
 export type CommandBody = z.infer<typeof commandBodySchema>;
 
+/** POST /api/auth/login 请求体校验：访问密码必填非空 */
+export const loginBodySchema = z.object({
+  /** 访问密码：非空 */
+  password: z.string().min(1, 'password 不能为空'),
+});
+
+/** 解析后的登录请求体类型 */
+export type LoginBody = z.infer<typeof loginBodySchema>;
+
 /** GET /api/recipes/recommend 查询参数校验：days 默认 3，须为正整数 */
 export const recipeRecommendQuerySchema = z.object({
   days: z.coerce.number().int().positive().default(3),
