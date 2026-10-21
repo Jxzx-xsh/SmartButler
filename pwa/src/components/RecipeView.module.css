@@ -74,6 +74,40 @@
   line-height: 1.6;
 }
 
+/* 模型原始思维链（可折叠，仿 LM Studio Thinking 块） */
+.trace {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  box-shadow: var(--shadow);
+}
+
+.traceSummary {
+  cursor: pointer;
+  font-size: var(--font-footnote);
+  font-weight: 600;
+  color: var(--color-text-soft);
+  user-select: none;
+  list-style: none;
+}
+
+.traceSummary::before {
+  content: '▸ ';
+}
+
+.trace[open] .traceSummary::before {
+  content: '▾ ';
+}
+
+.traceBody {
+  margin: 10px 0 0;
+  font-size: var(--font-footnote);
+  color: var(--color-text-soft);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
 /* 菜谱列表 */
 .list {
   display: grid;

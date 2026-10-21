@@ -83,8 +83,10 @@ export interface Recipe {
 
 /** 食谱推荐结果。 */
 export interface RecipeResult {
-  /** 模型的思考/推荐理由，解释为什么选这些菜 */
+  /** 模型写在 JSON 里的推荐理由摘要 */
   thinking?: string;
+  /** 模型的原始思维链（qwen3 reasoning_content） */
+  reasoning?: string;
   recipes: Recipe[];
 }
 

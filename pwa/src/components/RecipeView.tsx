@@ -222,6 +222,7 @@ export function RecipeView() {
   const query = useRecipeRecommend();
   const recipes = query.data?.recipes ?? [];
   const thinking = query.data?.thinking;
+  const reasoning = query.data?.reasoning;
   // 已发起过请求且非加载中、无错误、结果为空时，提示空态
   const isEmpty =
     query.isFetched && !query.isFetching && !query.error && recipes.length === 0;
@@ -256,6 +257,13 @@ export function RecipeView() {
             <span className={styles.reasoningLabel}>💡 推荐思路</span>
             <p>{thinking}</p>
           </div>
+        )}
+
+        {!query.isFetching && reasoning && (
+          <details className={styles.trace}>
+            <summary className={styles.traceSummary}>🧠 思考过程</summary>
+            <p className={styles.traceBody}>{reasoning}</p>
+          </details>
         )}
 
         {!query.isFetching && (

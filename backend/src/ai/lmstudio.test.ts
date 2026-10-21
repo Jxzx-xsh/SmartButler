@@ -222,6 +222,47 @@ describe('chatTextJson', () => {
   });
 });
 
+describe('chatTextJsonWithReasoning', () => {
+  it('带回 qwen3 原始思维链 reasoning_content', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: '{"recipes":[{"name":"番茄炒蛋"}]}',
+            reasoning_content: '好的，用户要推荐菜，番茄和鸡蛋临期，先做番茄炒蛋……',
+          },
+        },
+      ],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const { data, reasoning } = await client.chatTextJsonWithReasoning<{
+      recipes: Array<{ name: string }>;
+    }>({ user: 'x' });
+    expect(data.recipes[0]?.name).toBe('番茄炒蛋');
+    expect(reasoning).toContain('番茄炒蛋');
+  });
+
+  it('无 reasoning_content 时 reasoning 缺省；空白串也视为无', async () => {
+    const chatCreate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"a":1}' } }],
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: '{"a":1}', reasoning_content: '   ' } }],
+      });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const r1 = await client.chatTextJsonWithReasoning({ user: 'x' });
+    expect(r1.reasoning).toBeUndefined();
+    const r2 = await client.chatTextJsonWithReasoning({ user: 'x' });
+    expect(r2.reasoning).toBeUndefined();
+  });
+});
+
 describe('chatVision', () => {
   it('构造含 text 项与多张 image_url 的 content 数组', async () => {
     const chatCreate = vi.fn().mockResolvedValue({

@@ -36,8 +36,10 @@ export interface Recipe {
 
 /** 食谱推荐结果。 */
 export interface RecipeResult {
-  /** 模型的思考/推荐理由，解释为什么选这些菜（可能为空） */
+  /** 模型写在 JSON 里的推荐理由摘要（可能为空） */
   thinking?: string;
+  /** 模型的原始思维链（qwen3 reasoning_content，可能为空） */
+  reasoning?: string;
   recipes: Recipe[];
 }
 
@@ -145,7 +147,7 @@ const zRawResponse = z.object({
 export function createRecipeRecommender(
   deps: CreateRecipeRecommenderDeps,
 ): RecipeRecommender {
-  const { client, queue, model } = deps;
+  const { client, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
   async function recommend(
@@ -166,9 +168,13 @@ export function createRecipeRecommender(
 
     // 调用模型：recipe 不走 queue（queue 里 deferred 的 vision-parser 可能占着 worker
     // 导致 immediate 被延迟执行、模型超时返回空）。直接调用即可。
-    const callModel = (): Promise<unknown> =>
-      client.chatTextJson<unknown>({ system, user, temperature: 0, model });
-    const raw = await callModel();
+    // 用 chatTextJsonWithReasoning 顺带拿回 qwen3 原始思维链，供前端展示。
+    const { data: raw, reasoning } = await client.chatTextJsonWithReasoning<unknown>({
+      system,
+      user,
+      temperature: 0,
+      model,
+    });
 
     // 校验模型返回结构；非法（recipes 非数组等）抛 bad_response
     const parsed = zRawResponse.safeParse(raw);
@@ -213,7 +219,14 @@ export function createRecipeRecommender(
         ? parsed.data.thinking.trim() || undefined
         : undefined;
 
-    return thinking ? { thinking, recipes } : { recipes };
+    const result: RecipeResult = { recipes };
+    if (thinking) {
+      result.thinking = thinking;
+    }
+    if (reasoning) {
+      result.reasoning = reasoning;
+    }
+    return result;
   }
 
   return { recommend };

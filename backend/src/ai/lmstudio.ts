@@ -64,9 +64,13 @@ export interface LmStudioClient {
   chatText(opts: ChatTextOptions): Promise<string>;
   /** 文本对话并解析为 JSON（强制 json_object），解析失败抛 bad_response */
   chatTextJson<T = unknown>(opts: ChatTextOptions): Promise<T>;
+  /** 同 chatTextJson，同时带回模型的原始思维链（qwen3 reasoning_content，可能为空） */
+  chatTextJsonWithReasoning<T = unknown>(
+    opts: ChatTextOptions,
+  ): Promise<{ data: T; reasoning?: string }>;
   /** 多模态对话（文本 + 图片），返回文本 */
   chatVision(opts: ChatVisionOptions): Promise<string>;
-  /** 多模态对话并解析为 JSON（复用 extractJson 容错解析），解析失败抛 bad_response */
+  /** 多模态对话并解析为 JSON（复用 parseJsonFromText 容错解析），解析失败抛 bad_response */
   chatVisionJson<T = unknown>(opts: ChatVisionOptions): Promise<T>;
   /** 文本嵌入，始终返回 number[][]（单条也包成一维数组的数组） */
   embed(opts: EmbedOptions): Promise<number[][]>;
@@ -225,6 +229,16 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     return content;
   }
 
+  /** 从 chat 返回里取出原始思维链（qwen3 reasoning_content），缺失返回 undefined。 */
+  function extractReasoning(result: ChatCompletionResult): string | undefined {
+    const reasoning = result.choices?.[0]?.message?.reasoning_content;
+    if (typeof reasoning !== 'string') {
+      return undefined;
+    }
+    const trimmed = reasoning.trim();
+    return trimmed === '' ? undefined : trimmed;
+  }
+
   async function chatText(opts: ChatTextOptions): Promise<string> {
     try {
       const body: ChatCompletionCreateBody = {
@@ -244,18 +258,53 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
-  async function chatTextJson<T = unknown>(opts: ChatTextOptions): Promise<T> {
+  /**
+   * chatTextJson 与 chatTextJsonWithReasoning 共用的核心：
+   * 以 text 响应格式调模型，容错解析 JSON，并按需带回思维链。
+   */
+  async function chatTextJsonCore<T>(
+    opts: ChatTextOptions,
+  ): Promise<{ data: T; reasoning?: string }> {
     // 用 text 响应格式（而非 json_object）：LM Studio 新版 response_format 只接受
     // 'json_schema' 或 'text'，不支持 OpenAI 的 'json_object'。为兼容各版本，这里
     // 用 text 格式，依赖调用方在提示词里约束模型"只输出 JSON"，再在本函数做容错解析。
-    const text = await chatText({ ...opts, responseFormat: { type: 'text' } });
+    const withFormat: ChatTextOptions = { ...opts, responseFormat: { type: 'text' } };
+    let text: string;
+    let reasoning: string | undefined;
     try {
-      return parseJsonFromText<T>(text);
+      const body: ChatCompletionCreateBody = {
+        model: withFormat.model ?? config.textModel,
+        messages: toChatMessages(withFormat),
+      };
+      if (withFormat.temperature !== undefined) {
+        body.temperature = withFormat.temperature;
+      }
+      body.response_format = withFormat.responseFormat;
+      const result = await openai.chat.completions.create(body);
+      text = extractContent(result);
+      reasoning = extractReasoning(result);
+    } catch (err) {
+      throw mapError(err);
+    }
+    try {
+      const data = parseJsonFromText<T>(text);
+      return reasoning !== undefined ? { data, reasoning } : { data };
     } catch (err) {
       // 小模型输出不稳定，留下原始返回便于排查截断/非 JSON 等失败模式
       console.error('[lmstudio] JSON 解析失败，模型原始返回：', text.slice(0, 1000));
       throw new LmStudioError('LM Studio 返回的 JSON 解析失败', 'bad_response', err);
     }
+  }
+
+  async function chatTextJson<T = unknown>(opts: ChatTextOptions): Promise<T> {
+    const { data } = await chatTextJsonCore<T>(opts);
+    return data;
+  }
+
+  async function chatTextJsonWithReasoning<T = unknown>(
+    opts: ChatTextOptions,
+  ): Promise<{ data: T; reasoning?: string }> {
+    return chatTextJsonCore<T>(opts);
   }
 
   /**
@@ -414,5 +463,13 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     }
   }
 
-  return { chatText, chatTextJson, chatVision, chatVisionJson, embed, listModels };
+  return {
+    chatText,
+    chatTextJson,
+    chatTextJsonWithReasoning,
+    chatVision,
+    chatVisionJson,
+    embed,
+    listModels,
+  };
 }

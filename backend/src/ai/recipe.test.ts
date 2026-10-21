@@ -14,14 +14,17 @@ const FIXED_NOW = Date.parse('2025-01-01T12:00:00+08:00');
 /** 一天毫秒。 */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-/** 构造一个只实现 chatTextJson 的 fake client；其余方法用不到，置为抛错桩。 */
-function makeFakeClient(chatTextJson: ReturnType<typeof vi.fn>): LmStudioClient {
+/** 构造一个只实现 chatTextJsonWithReasoning 的 fake client；其余方法用不到，置为抛错桩。 */
+function makeFakeClient(
+  chatTextJsonWithReasoning: ReturnType<typeof vi.fn>,
+): LmStudioClient {
   const notUsed = (): never => {
     throw new Error('本测试不应调用该方法');
   };
   return {
     chatText: notUsed,
-    chatTextJson,
+    chatTextJson: notUsed,
+    chatTextJsonWithReasoning,
     chatVision: notUsed,
     chatVisionJson: notUsed,
     embed: notUsed,
@@ -48,15 +51,17 @@ describe('createRecipeRecommender.recommend', () => {
     createItem(db, { name: '鸡蛋' });
 
     const chatTextJson = vi.fn().mockResolvedValue({
-      recipes: [
-        {
-          name: '牛奶炖蛋',
-          usedItems: ['牛奶', '鸡蛋'],
-          missingItems: ['糖'],
-          steps: ['牛奶加热', '打入鸡蛋搅匀', '上锅蒸'],
-          note: '家常甜品',
-        },
-      ],
+      data: {
+        recipes: [
+          {
+            name: '牛奶炖蛋',
+            usedItems: ['牛奶', '鸡蛋'],
+            missingItems: ['糖'],
+            steps: ['牛奶加热', '打入鸡蛋搅匀', '上锅蒸'],
+            note: '家常甜品',
+          },
+        ],
+      },
     });
     const recommender = createRecipeRecommender({
       client: makeFakeClient(chatTextJson),
@@ -80,7 +85,7 @@ describe('createRecipeRecommender.recommend', () => {
     createItem(db, { name: '牛奶', expiryDate: FIXED_NOW + MS_PER_DAY });
     createItem(db, { name: '面粉' });
 
-    const chatTextJson = vi.fn().mockResolvedValue({ recipes: [] });
+    const chatTextJson = vi.fn().mockResolvedValue({ data: { recipes: [] } });
     const recommender = createRecipeRecommender({
       client: makeFakeClient(chatTextJson),
       now: () => FIXED_NOW,
@@ -105,7 +110,7 @@ describe('createRecipeRecommender.recommend', () => {
   });
 
   it('fake 返回结构非法（recipes 非数组）→ 抛 bad_response', async () => {
-    const chatTextJson = vi.fn().mockResolvedValue({ recipes: '不是数组' });
+    const chatTextJson = vi.fn().mockResolvedValue({ data: { recipes: '不是数组' } });
     const recommender = createRecipeRecommender({
       client: makeFakeClient(chatTextJson),
       now: () => FIXED_NOW,
@@ -119,7 +124,7 @@ describe('createRecipeRecommender.recommend', () => {
   });
 
   it('空库不崩：无食材也能正常返回', async () => {
-    const chatTextJson = vi.fn().mockResolvedValue({ recipes: [] });
+    const chatTextJson = vi.fn().mockResolvedValue({ data: { recipes: [] } });
     const recommender = createRecipeRecommender({
       client: makeFakeClient(chatTextJson),
       now: () => FIXED_NOW,
@@ -137,7 +142,7 @@ describe('createRecipeRecommender.recommend', () => {
     // 牛奶 5 天后到期：days=3 时不算临期，days=7 时算临期
     createItem(db, { name: '牛奶', expiryDate: FIXED_NOW + 5 * MS_PER_DAY, confirmed: true });
 
-    const chatTextJson = vi.fn().mockResolvedValue({ recipes: [] });
+    const chatTextJson = vi.fn().mockResolvedValue({ data: { recipes: [] } });
     const recommender = createRecipeRecommender({
       client: makeFakeClient(chatTextJson),
       now: () => FIXED_NOW,
@@ -155,10 +160,35 @@ describe('createRecipeRecommender.recommend', () => {
     expect(systemDays7).toContain('牛奶（优先用掉）');
   });
 
+  it('模型思维链 reasoning 透传到结果；无思维链时缺省', async () => {
+    createItem(db, { name: '牛奶', expiryDate: FIXED_NOW + MS_PER_DAY });
+
+    // 有 reasoning_content：透传
+    const withReasoning = vi.fn().mockResolvedValue({
+      data: { recipes: [{ name: '牛奶炖蛋', usedItems: ['牛奶'] }] },
+      reasoning: '好的，用户想让我推荐菜，先看食材。牛奶临期了，优先用掉……',
+    });
+    const r1 = await createRecipeRecommender({
+      client: makeFakeClient(withReasoning),
+      now: () => FIXED_NOW,
+    }).recommend(db);
+    expect(r1.reasoning).toContain('牛奶临期了');
+
+    // 无 reasoning_content：结果不带 reasoning 键
+    const withoutReasoning = vi.fn().mockResolvedValue({
+      data: { recipes: [{ name: '牛奶炖蛋', usedItems: ['牛奶'] }] },
+    });
+    const r2 = await createRecipeRecommender({
+      client: makeFakeClient(withoutReasoning),
+      now: () => FIXED_NOW,
+    }).recommend(db);
+    expect(r2.reasoning).toBeUndefined();
+  });
+
   it('注入 queue 时仍直接调用模型（绕开 queue，避免被 deferred 任务阻塞）', async () => {
     createItem(db, { name: '牛奶', expiryDate: FIXED_NOW + MS_PER_DAY });
     const chatTextJson = vi.fn().mockResolvedValue({
-      recipes: [{ name: '牛奶炖蛋', usedItems: ['牛奶'] }],
+      data: { recipes: [{ name: '牛奶炖蛋', usedItems: ['牛奶'] }] },
     });
     // fake 队列：若被调用则直接执行；本测试断言它不会被调用
     const enqueueImmediate = vi.fn(
