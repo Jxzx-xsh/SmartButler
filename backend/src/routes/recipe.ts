@@ -11,6 +11,7 @@
  */
 
 import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import type { ServerResponse } from 'node:http';
 
 import type { AppDatabase } from '../db/client.js';
 import type { RecipeRecommender } from '../ai/recipe.js';
@@ -35,12 +36,68 @@ export interface RecipeRoutesOptions extends FastifyPluginOptions {
   recommender: RecipeRecommender;
 }
 
+/** 向 SSE 连接写一条事件。 */
+function sseSend(raw: ServerResponse, event: string, data: unknown): void {
+  raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
 /** 注册食谱推荐路由。 */
 export async function recipeRoutes(
   app: FastifyInstance,
   opts: RecipeRoutesOptions,
 ): Promise<void> {
   const { db, recommender } = opts;
+
+  // GET /api/recipes/recommend/stream — SSE 流式推荐：
+  //   event: reasoning  data: {"delta":"思维链增量"}（多次）
+  //   event: result     data: RecipeResult（一次，随后结束连接）
+  //   event: fail       data: {"message":...,"code":...}（出错时）
+  app.get('/api/recipes/recommend/stream', async (request, reply) => {
+    const { days } = recipeRecommendQuerySchema.parse(request.query);
+
+    // hijack 后由我们直接写原生响应，Fastify 不再接管
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      // 关掉 nginx/反代可能的缓冲，保证增量即时到达
+      'X-Accel-Buffering': 'no',
+    });
+    // 立即刷出响应头，让前端尽早进入接收态
+    raw.flushHeaders();
+
+    try {
+      const result = await recommender.recommendStream(db, { days }, {
+        onReasoningDelta: (delta) => sseSend(raw, 'reasoning', { delta }),
+      });
+      sseSend(raw, 'result', result);
+    } catch (err) {
+      if (err instanceof LmStudioError) {
+        if (err.kind === 'connection' || err.kind === 'timeout') {
+          sseSend(raw, 'fail', {
+            message: 'LM Studio 不可达，请确认本地模型已启动',
+            code: 'LMSTUDIO_UNREACHABLE',
+          });
+        } else if (err.kind === 'bad_response') {
+          sseSend(raw, 'fail', {
+            message: 'LM Studio 返回无法解析',
+            code: 'LMSTUDIO_BAD_RESPONSE',
+          });
+        } else {
+          sseSend(raw, 'fail', { message: err.message, code: 'LMSTUDIO_ERROR' });
+        }
+      } else {
+        sseSend(raw, 'fail', {
+          message: err instanceof Error ? err.message : '推荐失败',
+          code: 'INTERNAL',
+        });
+      }
+    } finally {
+      raw.end();
+    }
+  });
 
   // GET /api/recipes/recommend — 基于家里食材推荐家常菜
   app.get('/api/recipes/recommend', async (request, reply) => {

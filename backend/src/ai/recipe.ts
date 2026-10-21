@@ -65,6 +65,15 @@ export interface CreateRecipeRecommenderDeps {
 export interface RecipeRecommender {
   /** 基于家里食材推荐 2-4 道家常菜 */
   recommend(db: AppDatabase, opts?: RecommendOptions): Promise<RecipeResult>;
+  /**
+   * 流式版推荐：模型边生成边经 onReasoningDelta 推送思维链增量，
+   * 全部生成完毕后返回与 recommend 相同结构的结果。
+   */
+  recommendStream(
+    db: AppDatabase,
+    opts?: RecommendOptions,
+    handlers?: { onReasoningDelta?: (delta: string) => void },
+  ): Promise<RecipeResult>;
 }
 
 /** 构造取材清单的单项：名称 + 是否临期（优先用掉）。 */
@@ -150,12 +159,8 @@ export function createRecipeRecommender(
   const { client, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
-  async function recommend(
-    db: AppDatabase,
-    opts: RecommendOptions = {},
-  ): Promise<RecipeResult> {
-    const days = opts.days ?? 3;
-
+  /** 取材 + 构造提示词（recommend 与 recommendStream 共用）。 */
+  function buildPrompt(db: AppDatabase, days: number): { system: string; user: string } {
     // 临期项（含已过期）：标注优先用掉，排在取材清单前列
     const expiringNames = listExpiringItems(db, days, now()).map((i) => i.name);
     // 已确认食品：补充非临期的可用食材
@@ -163,19 +168,14 @@ export function createRecipeRecommender(
     const pantry = buildPantry(expiringNames, confirmedNames);
 
     const ctx = buildDateContext(now());
-    const system = buildSystemPrompt(ctx, pantry);
-    const user = '请根据以上食材推荐家常菜。';
+    return {
+      system: buildSystemPrompt(ctx, pantry),
+      user: '请根据以上食材推荐家常菜。',
+    };
+  }
 
-    // 调用模型：recipe 不走 queue（queue 里 deferred 的 vision-parser 可能占着 worker
-    // 导致 immediate 被延迟执行、模型超时返回空）。直接调用即可。
-    // 用 chatTextJsonWithReasoning 顺带拿回 qwen3 原始思维链，供前端展示。
-    const { data: raw, reasoning } = await client.chatTextJsonWithReasoning<unknown>({
-      system,
-      user,
-      temperature: 0,
-      model,
-    });
-
+  /** 校验模型返回结构并归一化为 RecipeResult（recommend 与 recommendStream 共用）。 */
+  function toResult(raw: unknown, reasoning: string | undefined): RecipeResult {
     // 校验模型返回结构；非法（recipes 非数组等）抛 bad_response
     const parsed = zRawResponse.safeParse(raw);
     if (!parsed.success) {
@@ -229,5 +229,39 @@ export function createRecipeRecommender(
     return result;
   }
 
-  return { recommend };
+  async function recommend(
+    db: AppDatabase,
+    opts: RecommendOptions = {},
+  ): Promise<RecipeResult> {
+    const { system, user } = buildPrompt(db, opts.days ?? 3);
+
+    // 调用模型：recipe 不走 queue（queue 里 deferred 的 vision-parser 可能占着 worker
+    // 导致 immediate 被延迟执行、模型超时返回空）。直接调用即可。
+    // 用 chatTextJsonWithReasoning 顺带拿回 qwen3 原始思维链，供前端展示。
+    const { data: raw, reasoning } = await client.chatTextJsonWithReasoning<unknown>({
+      system,
+      user,
+      temperature: 0,
+      model,
+    });
+
+    return toResult(raw, reasoning);
+  }
+
+  async function recommendStream(
+    db: AppDatabase,
+    opts: RecommendOptions = {},
+    handlers: { onReasoningDelta?: (delta: string) => void } = {},
+  ): Promise<RecipeResult> {
+    const { system, user } = buildPrompt(db, opts.days ?? 3);
+
+    const { data: raw, reasoning } = await client.chatTextJsonStream<unknown>(
+      { system, user, temperature: 0, model },
+      handlers,
+    );
+
+    return toResult(raw, reasoning);
+  }
+
+  return { recommend, recommendStream };
 }

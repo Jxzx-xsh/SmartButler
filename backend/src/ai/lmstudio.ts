@@ -68,6 +68,14 @@ export interface LmStudioClient {
   chatTextJsonWithReasoning<T = unknown>(
     opts: ChatTextOptions,
   ): Promise<{ data: T; reasoning?: string }>;
+  /**
+   * 流式版 chatTextJsonWithReasoning：模型边生成边经 onReasoningDelta 推送
+   * 思维链增量；content 完整收齐后容错解析为 JSON 返回。
+   */
+  chatTextJsonStream<T = unknown>(
+    opts: ChatTextOptions,
+    handlers?: { onReasoningDelta?: (delta: string) => void },
+  ): Promise<{ data: T; reasoning?: string }>;
   /** 多模态对话（文本 + 图片），返回文本 */
   chatVision(opts: ChatVisionOptions): Promise<string>;
   /** 多模态对话并解析为 JSON（复用 parseJsonFromText 容错解析），解析失败抛 bad_response */
@@ -104,6 +112,22 @@ interface ChatCompletionCreateBody {
   messages: Array<{ role: ChatRole; content: string | VisionContentPart[] }>;
   temperature?: number;
   response_format?: { type: 'json_object' | 'json_schema' | 'text' };
+  /** 流式开关：true 时 create 返回 SSE 异步迭代器而非一次性结果 */
+  stream?: boolean;
+}
+
+/**
+ * 流式 chat 的增量块（SSE data 载荷，本封装用到的字段）。
+ * qwen3 流式时 reasoning_content 与 content 分别以 delta 形式到达：
+ * 先一段 reasoning_content 增量流，再一段 content 增量流。
+ */
+interface ChatCompletionStreamChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+    } | null;
+  }>;
 }
 
 /** 视觉消息 content 数组元素。 */
@@ -307,6 +331,56 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     return chatTextJsonCore<T>(opts);
   }
 
+  async function chatTextJsonStream<T = unknown>(
+    opts: ChatTextOptions,
+    handlers: { onReasoningDelta?: (delta: string) => void } = {},
+  ): Promise<{ data: T; reasoning?: string }> {
+    const body: ChatCompletionCreateBody = {
+      model: opts.model ?? config.textModel,
+      messages: toChatMessages(opts),
+      // 同 chatTextJsonCore：text 格式 + 提示词约束 JSON，收齐后容错解析
+      response_format: { type: 'text' },
+      stream: true,
+    };
+    if (opts.temperature !== undefined) {
+      body.temperature = opts.temperature;
+    }
+
+    let content = '';
+    let reasoning = '';
+    try {
+      // OpenAILike 未声明流式返回类型，这里收窄为异步迭代器；
+      // 真实 openai 实例与测试 fake 均按此形状提供。
+      const stream = (await openai.chat.completions.create(
+        body,
+      )) as unknown as AsyncIterable<ChatCompletionStreamChunk>;
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta;
+        if (typeof delta?.reasoning_content === 'string' && delta.reasoning_content !== '') {
+          reasoning += delta.reasoning_content;
+          handlers.onReasoningDelta?.(delta.reasoning_content);
+        }
+        if (typeof delta?.content === 'string') {
+          content += delta.content;
+        }
+      }
+    } catch (err) {
+      throw mapError(err);
+    }
+
+    if (content.length === 0) {
+      throw new LmStudioError('LM Studio 返回缺少 content', 'bad_response', { content, reasoning });
+    }
+    try {
+      const data = parseJsonFromText<T>(content);
+      const trimmed = reasoning.trim();
+      return trimmed === '' ? { data } : { data, reasoning: trimmed };
+    } catch (err) {
+      console.error('[lmstudio] 流式 JSON 解析失败，模型原始返回：', content.slice(0, 1000));
+      throw new LmStudioError('LM Studio 返回的 JSON 解析失败', 'bad_response', err);
+    }
+  }
+
   /**
    * 从模型文本输出中解析 JSON。
    * 容错处理：
@@ -467,6 +541,7 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     chatText,
     chatTextJson,
     chatTextJsonWithReasoning,
+    chatTextJsonStream,
     chatVision,
     chatVisionJson,
     embed,

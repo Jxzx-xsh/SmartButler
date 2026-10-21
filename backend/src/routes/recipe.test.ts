@@ -33,7 +33,7 @@ describe('GET /api/recipes/recommend', () => {
     const result: RecipeResult = {
       recipes: [{ name: '番茄炒蛋', usedItems: ['番茄', '鸡蛋'] }],
     };
-    app = buildWith({ recommend: vi.fn().mockResolvedValue(result) });
+    app = buildWith({ recommend: vi.fn().mockResolvedValue(result), recommendStream: vi.fn() });
     await app.ready();
 
     const res = await app.inject({ method: 'GET', url: '/api/recipes/recommend' });
@@ -45,6 +45,7 @@ describe('GET /api/recipes/recommend', () => {
   it('recommender 抛 connection LmStudioError → 503 LMSTUDIO_UNREACHABLE', async () => {
     app = buildWith({
       recommend: vi.fn().mockRejectedValue(new LmStudioError('无法连接', 'connection')),
+      recommendStream: vi.fn(),
     });
     await app.ready();
 
@@ -57,6 +58,7 @@ describe('GET /api/recipes/recommend', () => {
   it('recommender 抛 timeout LmStudioError → 503 LMSTUDIO_UNREACHABLE', async () => {
     app = buildWith({
       recommend: vi.fn().mockRejectedValue(new LmStudioError('超时', 'timeout')),
+      recommendStream: vi.fn(),
     });
     await app.ready();
 
@@ -69,6 +71,7 @@ describe('GET /api/recipes/recommend', () => {
   it('recommender 抛 bad_response LmStudioError → 502 LMSTUDIO_BAD_RESPONSE', async () => {
     app = buildWith({
       recommend: vi.fn().mockRejectedValue(new LmStudioError('结构非法', 'bad_response')),
+      recommendStream: vi.fn(),
     });
     await app.ready();
 
@@ -80,7 +83,7 @@ describe('GET /api/recipes/recommend', () => {
 
   it('days 查询参数透传给 recommender.recommend', async () => {
     const recommend = vi.fn().mockResolvedValue({ recipes: [] } satisfies RecipeResult);
-    app = buildWith({ recommend });
+    app = buildWith({ recommend, recommendStream: vi.fn() });
     await app.ready();
 
     await app.inject({ method: 'GET', url: '/api/recipes/recommend?days=7' });
@@ -90,7 +93,7 @@ describe('GET /api/recipes/recommend', () => {
 
   it('缺省 days 时按默认 3 透传', async () => {
     const recommend = vi.fn().mockResolvedValue({ recipes: [] } satisfies RecipeResult);
-    app = buildWith({ recommend });
+    app = buildWith({ recommend, recommendStream: vi.fn() });
     await app.ready();
 
     await app.inject({ method: 'GET', url: '/api/recipes/recommend' });
@@ -104,7 +107,7 @@ describe('收藏食谱端点 /api/recipes/saved', () => {
 
   beforeEach(async () => {
     // saved 端点不依赖 recommender，用占位 fake 构造 app
-    app = buildWith({ recommend: vi.fn() });
+    app = buildWith({ recommend: vi.fn(), recommendStream: vi.fn() });
     await app.ready();
   });
 

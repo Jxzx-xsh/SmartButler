@@ -13,10 +13,10 @@
  * 样式用 CSS Modules，跟随现有组件风格。
  */
 
-import { useEffect, useState } from 'react';
-import type { Recipe, SavedRecipe } from '../api/types';
+import { useEffect, useRef, useState } from 'react';
+import type { Recipe, RecipeResult, SavedRecipe } from '../api/types';
+import { recipesApi } from '../api/client';
 import {
-  useRecipeRecommend,
   useRemoveSavedRecipe,
   useSaveRecipe,
   useSavedRecipes,
@@ -217,44 +217,49 @@ function SavedRecipesSection() {
   );
 }
 
-/** 打字机文本：逐字打出模型思维链，打完前显示闪烁光标。 */
-function Typewriter({ text }: { text: string }) {
-  const [len, setLen] = useState(0);
-
-  useEffect(() => {
-    setLen(0);
-    // 自适应步长：无论文本多长，控制在 ~10 秒内打完
-    const step = Math.max(1, Math.ceil(text.length / 320));
-    const timer = setInterval(() => {
-      setLen((n) => {
-        if (n >= text.length) {
-          clearInterval(timer);
-          return n;
-        }
-        return Math.min(text.length, n + step);
-      });
-    }, 30);
-    return () => clearInterval(timer);
-  }, [text]);
-
-  const done = len >= text.length;
-  return (
-    <p className={styles.traceBody}>
-      {text.slice(0, len)}
-      {!done && <span className={styles.cursor}>▍</span>}
-    </p>
-  );
-}
-
 /** 食谱页主体组件。 */
 export function RecipeView() {
-  const query = useRecipeRecommend();
-  const recipes = query.data?.recipes ?? [];
-  const thinking = query.data?.thinking;
-  const reasoning = query.data?.reasoning;
-  // 已发起过请求且非加载中、无错误、结果为空时，提示空态
-  const isEmpty =
-    query.isFetched && !query.isFetching && !query.error && recipes.length === 0;
+  // 流式推荐状态：phase 机 + 思维链实时文本 + 最终结果
+  const [phase, setPhase] = useState<'idle' | 'streaming' | 'done' | 'error'>('idle');
+  const [liveReasoning, setLiveReasoning] = useState('');
+  const [result, setResult] = useState<RecipeResult | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const streaming = phase === 'streaming';
+  const recipes = result?.recipes ?? [];
+  // 思维链展示文本：流式中用实时增量，结束后用结果里的完整版兜底
+  const traceText = streaming ? liveReasoning : (result?.reasoning ?? liveReasoning);
+  const isEmpty = phase === 'done' && recipes.length === 0;
+
+  const startRecommend = (): void => {
+    // 取消上一次未完成的流
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setPhase('streaming');
+    setLiveReasoning('');
+    setResult(null);
+    setError(null);
+    recipesApi
+      .recommendStream(
+        { onReasoningDelta: (d) => setLiveReasoning((prev) => prev + d) },
+        undefined,
+        ctrl.signal,
+      )
+      .then((r) => {
+        setResult(r);
+        setPhase('done');
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err : new Error('推荐失败'));
+        setPhase('error');
+      });
+  };
+
+  // 卸载时中断未完成的流
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   return (
     <section className={styles.container}>
@@ -268,44 +273,47 @@ export function RecipeView() {
           <button
             type="button"
             className={styles.recommendBtn}
-            onClick={() => void query.refetch()}
-            disabled={query.isFetching}
+            onClick={startRecommend}
+            disabled={streaming}
           >
-            {query.isFetching ? '正在思考…' : '推荐食谱'}
+            {streaming ? '正在思考…' : '推荐食谱'}
           </button>
         </div>
 
-        {query.isFetching && (
+        {streaming && liveReasoning === '' && (
           <div className={styles.thinking}>
             正在思考…（本地模型推理需几秒到几十秒）
           </div>
         )}
 
-        {!query.isFetching && thinking && (
+        {phase === 'done' && result?.thinking && (
           <div className={styles.reasoning}>
             <span className={styles.reasoningLabel}>💡 推荐思路</span>
-            <p>{thinking}</p>
+            <p>{result.thinking}</p>
           </div>
         )}
 
-        {!query.isFetching && reasoning && (
-          // key 按数据更新时间重挂载：每次新推荐都重新展开并重新打字
-          <details key={query.dataUpdatedAt} className={styles.trace} open>
+        {traceText !== '' && (
+          // 流式期间强制展开；结束后用户可自由折叠
+          <details className={styles.trace} open={streaming || undefined}>
             <summary className={styles.traceSummary}>🧠 思考过程</summary>
-            <Typewriter text={reasoning} />
+            <p className={styles.traceBody}>
+              {traceText}
+              {streaming && <span className={styles.cursor}>▍</span>}
+            </p>
           </details>
         )}
 
-        {!query.isFetching && (
+        {!streaming && (
           <StatusView
-            error={query.error}
+            error={phase === 'error' ? error : null}
             isEmpty={isEmpty}
             emptyText="没有推荐结果，换个时间或补充食材后再试"
-            onRetry={() => void query.refetch()}
+            onRetry={startRecommend}
           />
         )}
 
-        {!query.isFetching && recipes.length > 0 && (
+        {recipes.length > 0 && (
           <div className={styles.list}>
             {recipes.map((recipe) => (
               <RecipeCard key={recipe.name} recipe={recipe} />

@@ -182,6 +182,91 @@ export const recipesApi = {
   /** 基于家里食材推荐家常菜（days 控制临期判定窗口，缺省后端默认 3）。 */
   recommend: (days?: number) =>
     request<RecipeResult>('/api/recipes/recommend', { query: { days } }),
+  /**
+   * SSE 流式推荐：思维链增量经 onReasoningDelta 实时回调，
+   * 完整结果作为 Promise 返回值；失败抛 ApiError。
+   * signal 可中断流（组件卸载/重新发起时取消上一次）。
+   */
+  recommendStream: async (
+    handlers: { onReasoningDelta?: (delta: string) => void },
+    days?: number,
+    signal?: AbortSignal,
+  ): Promise<RecipeResult> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    let res: Response;
+    try {
+      res = await fetch(
+        `${API_BASE}/api/recipes/recommend/stream${buildQuery({ days })}`,
+        { headers, signal },
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      throw new ApiError('无法连接服务器，请确认后端已启动', 0);
+    }
+    if (res.status === 401) {
+      clearToken();
+      window.dispatchEvent(new Event('smartbutler:unauthorized'));
+      throw await toApiError(res);
+    }
+    if (!res.ok) {
+      throw await toApiError(res);
+    }
+    if (!res.body) {
+      throw new ApiError('服务器不支持流式响应', res.status);
+    }
+
+    // 逐块读取 SSE：按 \n\n 分帧，帧内解析 event:/data: 两行
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalResult: RecipeResult | null = null;
+    let failInfo: { message: string; code?: string } | null = null;
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep: number;
+      while ((sep = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        let event = '';
+        let data = '';
+        for (const line of frame.split('\n')) {
+          if (line.startsWith('event: ')) event = line.slice(7).trim();
+          else if (line.startsWith('data: ')) data = line.slice(6);
+        }
+        if (event === '' || data === '') continue;
+        try {
+          const payload = JSON.parse(data) as Record<string, unknown>;
+          if (event === 'reasoning' && typeof payload.delta === 'string') {
+            handlers.onReasoningDelta?.(payload.delta);
+          } else if (event === 'result') {
+            finalResult = payload as unknown as RecipeResult;
+          } else if (event === 'fail') {
+            failInfo = {
+              message: typeof payload.message === 'string' ? payload.message : '推荐失败',
+              code: typeof payload.code === 'string' ? payload.code : undefined,
+            };
+          }
+        } catch {
+          // 单帧解析失败不影响整体流
+        }
+      }
+    }
+
+    if (failInfo !== null) {
+      throw new ApiError(failInfo.message, 502, failInfo.code);
+    }
+    if (finalResult === null) {
+      throw new ApiError('流式响应异常中断', 0);
+    }
+    return finalResult;
+  },
   /** 收藏一道食谱（允许重复，每次新增一条）。 */
   saveRecipe: (body: SaveRecipeBody) =>
     request<SavedRecipe>('/api/recipes/saved', { method: 'POST', body }),
