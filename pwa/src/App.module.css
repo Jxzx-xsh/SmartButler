@@ -69,14 +69,21 @@
   opacity: 0.85;
 }
 
+/* iOS 分段控件（segmented control）风：悬浮圆角容器，内含等宽药丸 tab。
+   sticky 吸顶；半透明毛玻璃底 + 轻阴影表达层级（替代原整条下边框分割线）。 */
 .tabbar {
   display: flex;
-  background: color-mix(in srgb, var(--color-surface) 80%, transparent);
+  gap: 4px;
+  margin: 10px 12px;
+  padding: 4px;
+  background: color-mix(in srgb, var(--color-fill) 60%, var(--color-surface));
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 1px solid var(--color-border);
   position: sticky;
-  top: 0;
+  top: 8px;
   z-index: 10;
 }
 
@@ -87,18 +94,23 @@
   }
 }
 
+/* 单个 tab：等宽药丸，透明底，窄屏不换行不截断。
+   触控目标 ≥44px；过渡 0.25s ease（减少动效偏好时由 global.css 全局接管关停）。 */
 .tab {
   flex: 1;
-  padding: 14px 0;
-  text-align: center;
-  font-size: var(--font-body);
+  min-width: 0;
   min-height: 44px;
+  padding: 9px 4px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: var(--font-footnote);
+  font-weight: 500;
   border: none;
+  border-radius: 999px;
   background: transparent;
   color: var(--color-text-soft);
-  border-bottom: 2px solid transparent;
-  border-radius: 2px;
-  transition: color 0.2s ease, border-color 0.2s ease;
+  transition: color 0.25s ease, background-color 0.25s ease,
+    box-shadow 0.25s ease, font-weight 0.25s ease;
 }
 
 /* tab 为导航控件，不做按压缩放 */
@@ -106,10 +118,13 @@
   transform: none;
 }
 
+/* 选中态：白底药丸浮起（iOS segmented 质感）+ 主色文字 + 轻阴影，
+   颜色/背景/阴影随 transition 平滑渐变，形成切换动效。 */
 .tabActive {
+  background: var(--color-surface);
   color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
   font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .main {
@@ -126,5 +141,17 @@
   /* 暗色：顶部安全区用暗色品牌深调，与暗色 header 渐变衔接 */
   .header::before {
     background: var(--color-primary-light); /* 暗色品牌深调 #0d2a30 */
+  }
+
+  /* 暗色 tab 栏：容器与选中药丸都提亮以保层次。
+     选中药丸直接用白底 --color-surface（暗 #16262b）在深容器上区分度不足，
+     改用半透明主色底 + 亮青文字，深底上清晰可辨。 */
+  .tabbar {
+    background: color-mix(in srgb, var(--color-surface) 70%, transparent);
+  }
+
+  .tabActive {
+    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    color: var(--color-primary); /* 暗色亮青 #36d6e6 */
   }
 }

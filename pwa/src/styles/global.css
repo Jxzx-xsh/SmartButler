@@ -65,8 +65,18 @@ html,
 body {
   margin: 0;
   padding: 0;
-  /* 页面底色：冷调微渐变（组件仍引用 --color-bg） */
-  background: linear-gradient(180deg, #f2f8fa 0%, #e4eff2 100%);
+  /* 页面底色：顶部安全区（状态栏背后，全屏宽）兜底品牌青 + 下方页面冷调微渐变。
+     standalone + black-translucent 下 Web 内容延伸到状态栏下方，状态栏背后显示的是
+     页面最顶层底色；此处用首层渐变在 env(safe-area-inset-top) 高度内铺品牌青、之后透明，
+     露出下层页面渐变，从而消除顶部露白（含 .app 居中时两侧 gutter 的状态栏区域）。
+     非刘海/非 standalone 环境 env() 为 0，品牌色层高度 0，无副作用。 */
+  background:
+    linear-gradient(
+      180deg,
+      var(--color-primary) 0 env(safe-area-inset-top, 0px),
+      transparent env(safe-area-inset-top, 0px)
+    ),
+    linear-gradient(180deg, #f2f8fa 0%, #e4eff2 100%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
   -webkit-overflow-scrolling: touch;
@@ -137,10 +147,17 @@ h3 {
     --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.6);
   }
 
-  /* 暗色页面底色：深冷调微渐变 */
+  /* 暗色页面底色：顶部安全区兜底暗色品牌深青 + 下方深冷调微渐变。
+     与 header 暗色 ::before（--color-primary-light）、暗色 theme-color #0D2A30 三者同色，顶部连贯。 */
   html,
   body {
-    background: linear-gradient(180deg, #0c1619 0%, #0f1e22 100%);
+    background:
+      linear-gradient(
+        180deg,
+        var(--color-primary-light) 0 env(safe-area-inset-top, 0px),
+        transparent env(safe-area-inset-top, 0px)
+      ),
+      linear-gradient(180deg, #0c1619 0%, #0f1e22 100%);
   }
 }
 
