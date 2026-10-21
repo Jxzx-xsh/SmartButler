@@ -1,7 +1,7 @@
 .app {
   max-width: var(--max-width);
   margin: 0 auto;
-  min-height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   /* 食材线描背景纹理（浅色：青色低透明度，稀疏平铺）；底色由 body 渐变提供 */
@@ -70,7 +70,7 @@
 }
 
 /* iOS 分段控件（segmented control）风：悬浮圆角容器，内含等宽药丸 tab。
-   sticky 吸顶；半透明毛玻璃底 + 轻阴影表达层级（替代原整条下边框分割线）。 */
+   sticky 吸顶；毛玻璃底 + 轻阴影。吸顶位置计入顶部安全区，避开灵动岛。 */
 .tabbar {
   display: flex;
   gap: 4px;
@@ -83,7 +83,7 @@
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   backdrop-filter: saturate(180%) blur(20px);
   position: sticky;
-  top: 8px;
+  top: calc(8px + env(safe-area-inset-top, 0px));
   z-index: 10;
 }
 

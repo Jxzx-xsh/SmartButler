@@ -11,22 +11,31 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <meta name="description" content="SmartButler 家庭管家 — 食材/物品管理与到期提醒" />
-    <title>SmartButler 家庭管家</title>
+    <meta name="description" content="SmartButler — 食材/物品管理与到期提醒" />
+    <title>SmartButler</title>
     <!-- 启动占位样式：内联在 head，在 JS/CSS bundle 到达前即可生效，消除打开 PWA 时的白屏。
          自给自足、不依赖 global.css 变量，颜色与 global.css 的 --color-bg/品牌色对齐。 -->
     <style id="splash-style">
       #app-splash {
         position: fixed;
-        inset: 0;
-        z-index: 2147483000; /* 足够高，覆盖初始空白；React 挂载后由 main.tsx 主动移除 */
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        width: 100vw;
+        width: 100dvw;
+        width: 100lvw;
+        height: 100vh;
+        height: 100dvh;
+        height: 100lvh;
+        z-index: 2147483000;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
         gap: 18px;
-        /* 浅色：与 global.css --color-bg(#f2f8fa) 对齐 */
-        background: #f2f8fa;
+        /* 背景色去掉，跟随 body 渐变底色 */
+        background: transparent;
         color: #15242a;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
           'Microsoft YaHei', Roboto, sans-serif;
@@ -71,10 +80,10 @@
           transform: scale(1);
         }
       }
-      /* 深色适配：与 global.css 暗色 --color-bg(#0c1619)、品牌亮青(#36d6e6) 对齐 */
+      /* 深色适配：背景同样透明，跟随 body 深色调 */
       @media (prefers-color-scheme: dark) {
         #app-splash {
-          background: #0c1619;
+          background: transparent;
           color: #eaf2f4;
         }
         #app-splash .splash-dots span {
@@ -92,8 +101,6 @@
   </head>
   <body>
     <div id="root">
-      <!-- 启动占位：在 React 挂载前显示品牌加载态；createRoot(#root).render() 会接管并替换其内容，
-           main.tsx 另在挂载后主动移除本节点与 #splash-style 作为保险。 -->
       <div id="app-splash">
         <img class="splash-logo" src="/favicon.svg" width="72" height="72" alt="SmartButler" />
         <div class="splash-name">SmartButler</div>

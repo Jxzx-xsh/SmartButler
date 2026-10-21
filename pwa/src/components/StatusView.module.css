@@ -3,6 +3,73 @@
   text-align: center;
   color: var(--color-text-soft);
   font-size: var(--font-body);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+/* 全屏遮罩：用 Portal 渲染到 document.body，彻底脱离 .app 的 max-width/flex 约束。
+   三层高度兜底（lvh > dvh > vh），确保桌面 standalone PWA 和移动浏览器都铺满视口。
+   z-index 高于 splash(1) 和正常内容，盖住一切。 */
+.fullscreen {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  width: 100dvw;
+  width: 100lvw;
+  height: 100vh;
+  height: 100dvh;
+  height: 100lvh;
+  background: var(--color-bg);
+  z-index: 2147483001;
+  justify-content: center;
+  gap: 14px;
+}
+
+/* 深色模式下全屏遮罩用品牌深调 */
+@media (prefers-color-scheme: dark) {
+  .fullscreen {
+    background: #0c1619;
+  }
+}
+
+/* 全屏 loading 下的文字（居中白色或深色文字） */
+.fullscreen .statusText {
+  color: var(--color-text);
+  font-size: var(--font-headline);
+  font-weight: 500;
+}
+
+/* 轻量 spinner：蓝青脉动圆点，与 splash-style 动画同风格 */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: status-spin 0.9s linear infinite;
+}
+
+.fullscreen .spinner {
+  width: 40px;
+  height: 40px;
+  border-width: 4px;
+  border-color: var(--color-border);
+  border-top-color: var(--color-primary);
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.statusText {
+  /* 占位，局部 loading 时保持简洁 */
 }
 
 .error {

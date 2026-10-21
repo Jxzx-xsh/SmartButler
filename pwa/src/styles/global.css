@@ -63,6 +63,7 @@
 
 html,
 body {
+  height: 100%;
   margin: 0;
   padding: 0;
   /* 页面底色：顶部安全区（状态栏背后，全屏宽）兜底品牌青 + 下方页面冷调微渐变。
@@ -83,6 +84,7 @@ body {
 }
 
 #root {
+  height: 100%;
   min-height: 100vh;
 }
 
