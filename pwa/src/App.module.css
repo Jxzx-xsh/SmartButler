@@ -11,10 +11,24 @@
 }
 
 .header {
+  position: relative; /* 供 ::before 顶部安全区填充定位 */
   background: var(--gradient-brand);
   color: #fff;
   padding: 20px 16px;
   padding-top: max(20px, env(safe-area-inset-top));
+}
+
+/* 顶部安全区（刘海/状态栏）填充品牌主色，与 header 连成一体，消除露白。
+   用品牌渐变起始色的纯色，避免与 header 渐变方向冲突。
+   非刘海/非 standalone 环境下 env(safe-area-inset-top) 为 0，高度 0 无副作用。 */
+.header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%; /* 紧贴 header 顶边向上延伸 */
+  height: env(safe-area-inset-top);
+  background: var(--color-primary); /* 浅色品牌青 #0fb8c9 */
 }
 
 .headerTop {
@@ -107,5 +121,10 @@
 @media (prefers-color-scheme: dark) {
   .app {
     background-image: url("data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%27160%27%20height=%27150%27%20viewBox=%270%200%20160%20150%27%3E%3Cg%20fill=%27none%27%20stroke=%27%2336D6E6%27%20stroke-opacity=%270.08%27%20stroke-width=%271.6%27%20stroke-linecap=%27round%27%20stroke-linejoin=%27round%27%3E%3Cpath%20d=%27M30%2034%20C24%2030%2018%2033%2018%2040%20C18%2048%2025%2054%2030%2054%20C35%2054%2042%2048%2042%2040%20C42%2033%2036%2030%2030%2034%20Z%27/%3E%3Cpath%20d=%27M30%2034%20C30%2028%2032%2024%2037%2023%27/%3E%3Cpath%20d=%27M33%2027%20C37%2025%2041%2026%2042%2030%20C38%2032%2034%2031%2033%2027%20Z%27/%3E%3Cpath%20d=%27M96%2042%20C108%2032%20128%2032%20138%2042%20C128%2052%20108%2052%2096%2042%20Z%27/%3E%3Cpath%20d=%27M96%2042%20L86%2034%20L88%2042%20L86%2050%20Z%27/%3E%3Ccircle%20cx=%27128%27%20cy=%2740%27%20r=%271.6%27/%3E%3Cpath%20d=%27M62%20100%20L68%20128%20L84%20128%20L90%20100%20Z%27/%3E%3Cpath%20d=%27M62%20100%20L90%20100%27/%3E%3Cpath%20d=%27M90%20108%20C98%20108%2098%20120%2090%20120%27/%3E%3Cpath%20d=%27M20%20108%20C28%2098%2044%2098%2048%20112%20C40%20122%2024%20122%2020%20108%20Z%27/%3E%3Cpath%20d=%27M22%20110%20C30%20110%2040%20112%2046%20114%27/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  /* 暗色：顶部安全区用暗色品牌深调，与暗色 header 渐变衔接 */
+  .header::before {
+    background: var(--color-primary-light); /* 暗色品牌深调 #0d2a30 */
   }
 }

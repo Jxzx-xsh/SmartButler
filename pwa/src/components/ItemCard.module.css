@@ -7,14 +7,14 @@
   box-shadow: var(--shadow);
 }
 
+/* 过期：仅左边框细条提示，不整块染色（状态由 ExpiryBadge 药丸 tag 呈现） */
 .danger {
   border-left-color: var(--color-danger);
-  background: var(--color-danger-bg);
 }
 
+/* 临期：同上，仅左边框橙色细条 */
 .warn {
   border-left-color: var(--color-warn);
-  background: var(--color-warn-bg);
 }
 
 .header {
