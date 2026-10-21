@@ -13,7 +13,7 @@
  * 样式用 CSS Modules，跟随现有组件风格。
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Recipe, SavedRecipe } from '../api/types';
 import {
   useRecipeRecommend,
@@ -217,6 +217,35 @@ function SavedRecipesSection() {
   );
 }
 
+/** 打字机文本：逐字打出模型思维链，打完前显示闪烁光标。 */
+function Typewriter({ text }: { text: string }) {
+  const [len, setLen] = useState(0);
+
+  useEffect(() => {
+    setLen(0);
+    // 自适应步长：无论文本多长，控制在 ~10 秒内打完
+    const step = Math.max(1, Math.ceil(text.length / 320));
+    const timer = setInterval(() => {
+      setLen((n) => {
+        if (n >= text.length) {
+          clearInterval(timer);
+          return n;
+        }
+        return Math.min(text.length, n + step);
+      });
+    }, 30);
+    return () => clearInterval(timer);
+  }, [text]);
+
+  const done = len >= text.length;
+  return (
+    <p className={styles.traceBody}>
+      {text.slice(0, len)}
+      {!done && <span className={styles.cursor}>▍</span>}
+    </p>
+  );
+}
+
 /** 食谱页主体组件。 */
 export function RecipeView() {
   const query = useRecipeRecommend();
@@ -260,9 +289,10 @@ export function RecipeView() {
         )}
 
         {!query.isFetching && reasoning && (
-          <details className={styles.trace}>
+          // key 按数据更新时间重挂载：每次新推荐都重新展开并重新打字
+          <details key={query.dataUpdatedAt} className={styles.trace} open>
             <summary className={styles.traceSummary}>🧠 思考过程</summary>
-            <p className={styles.traceBody}>{reasoning}</p>
+            <Typewriter text={reasoning} />
           </details>
         )}
 
