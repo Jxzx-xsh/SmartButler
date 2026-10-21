@@ -30,8 +30,10 @@ export interface CreateVisionParserDeps {
   client: LmStudioClient;
   /** 可选 AI 任务队列：提供时识别任务经 enqueueDeferred 提交（延后、空闲批处理） */
   queue?: AiQueue;
-  /** 当前时间来源，默认 () => Date.now()；测试注入固定时钟保证确定性 */
+  /** 可选固定时钟，默认 () => Date.now()；测试注入保证确定性 */
   now?: () => number;
+  /** 视觉识别专用模型名，缺省时用 client 默认 visionModel */
+  model?: string;
 }
 
 /** 视觉物品识别器对外句柄。 */
@@ -128,7 +130,7 @@ function normalizeDate(value: string | number | null | undefined): number | unde
  * @param deps 依赖：client（必填）、queue（可选）、now（可选固定时钟）。
  */
 export function createVisionParser(deps: CreateVisionParserDeps): VisionParser {
-  const { client, queue } = deps;
+  const { client, queue, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
   async function parseFrame(jpeg: Buffer, timestamp: number): Promise<ParsedItem[]> {
@@ -142,6 +144,7 @@ export function createVisionParser(deps: CreateVisionParserDeps): VisionParser {
     // chatVision 只接收单个 prompt 字符串，故把 system 与 user 合并
     const run = (): Promise<unknown> =>
       client.chatVisionJson<unknown>({
+        model,
         prompt: `${system}\n${user}`,
         images: [dataUrl],
         temperature: 0,

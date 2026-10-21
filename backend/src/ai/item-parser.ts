@@ -54,6 +54,8 @@ export interface CreateItemParserDeps {
   queue?: AiQueue;
   /** 当前时间来源，默认 () => Date.now()；测试注入固定时钟保证确定性 */
   now?: () => number;
+  /** 物品解析专用模型名，缺省时用 client 默认 textModel */
+  model?: string;
 }
 
 /** 物品解析器对外句柄。 */
@@ -135,7 +137,7 @@ function normalizeDate(value: string | number | null | undefined): number | unde
  * @param deps 依赖：client（必填）、queue（可选）、now（可选固定时钟）。
  */
 export function createItemParser(deps: CreateItemParserDeps): ItemParser {
-  const { client, queue } = deps;
+  const { client, queue, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
   async function parse(text: string): Promise<ParsedItem[]> {
@@ -144,7 +146,7 @@ export function createItemParser(deps: CreateItemParserDeps): ItemParser {
 
     // 调用模型：有 queue 时经 enqueueImmediate 串行提交，否则直接调用
     const callModel = (): Promise<unknown> =>
-      client.chatTextJson<unknown>({ system, user: text, temperature: 0 });
+      client.chatTextJson<unknown>({ system, user: text, temperature: 0, model });
     const raw = queue
       ? await queue.enqueueImmediate<unknown>({ run: callModel, meta: { kind: 'item-parse' } })
       : await callModel();

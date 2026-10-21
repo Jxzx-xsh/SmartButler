@@ -53,6 +53,8 @@ export interface CreateRecipeRecommenderDeps {
   queue?: AiQueue;
   /** 当前时间来源，默认 () => Date.now()；测试注入固定时钟保证确定性 */
   now?: () => number;
+  /** 菜谱推荐专用模型名，缺省时用 client 默认 textModel */
+  model?: string;
 }
 
 /** 食谱推荐器对外句柄。 */
@@ -139,7 +141,7 @@ const zRawResponse = z.object({
 export function createRecipeRecommender(
   deps: CreateRecipeRecommenderDeps,
 ): RecipeRecommender {
-  const { client, queue } = deps;
+  const { client, queue, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
   async function recommend(
@@ -160,7 +162,7 @@ export function createRecipeRecommender(
 
     // 调用模型：有 queue 时经 enqueueImmediate 串行提交，否则直接调用
     const callModel = (): Promise<unknown> =>
-      client.chatTextJson<unknown>({ system, user, temperature: 0 });
+      client.chatTextJson<unknown>({ system, user, temperature: 0, model });
     const raw = queue
       ? await queue.enqueueImmediate<unknown>({ run: callModel, meta: { kind: 'recipe' } })
       : await callModel();

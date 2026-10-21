@@ -30,6 +30,7 @@ import { visionRoutes } from './routes/vision.js';
 import type { VisionIngest } from './capture/vision-ingest.js';
 import type { FrameBroadcaster } from './capture/frame-broadcaster.js';
 import { createLmStudioClient, type LmStudioClient } from './ai/lmstudio.js';
+import { loadAiConfig } from './ai/config.js';
 import { createWhisperTranscriber, type WhisperTranscriber } from './ai/whisper.js';
 import { createIntentClassifier } from './ai/intent-classifier.js';
 import { createItemParser } from './ai/item-parser.js';
@@ -67,6 +68,8 @@ export interface BuildAppOptions {
   db?: AppDatabase;
   /** 注入的 LM Studio 客户端，缺省调用 createLmStudioClient() */
   aiClient?: LmStudioClient;
+  /** 注入的 AI 配置，缺省基于 loadAiConfig() 读取；用于各任务选模型 */
+  aiConfig?: import('./ai/config.js').AiConfig;
   /** 注入的 whisper.cpp 转写器，缺省调用 createWhisperTranscriber() */
   transcriber?: WhisperTranscriber;
   /**
@@ -183,6 +186,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const authConfig = options.authConfig ?? loadAuthConfig();
   app.addHook('onRequest', createAuthHook(authConfig));
 
+  // AI 配置：缺省基于环境变量读取，用于各任务选择专用模型
+  const aiConfig = options.aiConfig ?? loadAiConfig();
+
   // 健康端点：唯一免 token 的健康检查，仅返回 {ok:true}，不泄露任何敏感信息
   app.get('/api/health', async () => ({ ok: true }));
 
@@ -197,7 +203,12 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   // 注入 LM Studio 客户端注册 AI 路由
   app.register(aiRoutes, { client: aiClient });
   // 注入 db + LM Studio 客户端 + whisper 转写器注册语音入库路由
-  app.register(voiceRoutes, { db, client: aiClient, transcriber });
+  app.register(voiceRoutes, {
+    db,
+    client: aiClient,
+    transcriber,
+    itemParseModel: aiConfig.itemParseModel,
+  });
   // 注入 db + LM Studio 客户端注册视觉入库路由（可注入 visionIngest 便于测试/接线）
   app.register(visionRoutes, {
     db,

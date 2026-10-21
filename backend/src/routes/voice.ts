@@ -36,6 +36,8 @@ export interface VoiceRoutesOptions extends FastifyPluginOptions {
   transcriber: WhisperTranscriber;
   /** 可选 AI 任务队列：提供时解析任务经 enqueueImmediate 串行提交 */
   queue?: AiQueue;
+  /** 物品解析专用模型名，缺省时用 client 默认 */
+  itemParseModel?: string;
 }
 
 /** 单个 ffmpeg 可接受音频的最大体积：25MB（与 app.ts 注册的上限保持一致语义）。 */
@@ -46,9 +48,9 @@ export async function voiceRoutes(
   app: FastifyInstance,
   opts: VoiceRoutesOptions,
 ): Promise<void> {
-  const { db, client, transcriber, queue } = opts;
+  const { db, client, transcriber, queue, itemParseModel } = opts;
   // 构造物品解析器：queue 存在时解析任务走队列即时串行提交
-  const parser = createItemParser(queue ? { client, queue } : { client });
+  const parser = createItemParser({ client, queue, model: itemParseModel });
 
   // POST /api/voice/ingest-text — 文本直接解析入库（可脱离 whisper 独立联调）
   app.post('/api/voice/ingest-text', async (request, reply) => {

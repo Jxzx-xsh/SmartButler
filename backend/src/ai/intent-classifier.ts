@@ -53,6 +53,8 @@ export interface CreateIntentClassifierDeps {
   queue?: AiQueue;
   /** 当前时间来源，默认 () => Date.now()；测试注入固定时钟保证确定性 */
   now?: () => number;
+  /** 意图分类专用模型名，缺省时用 client 默认 textModel */
+  model?: string;
 }
 
 /** 意图分类器对外句柄。 */
@@ -106,7 +108,7 @@ const zRawResponse = z.object({
  * @param deps 依赖：client（必填）、queue（可选）、now（可选固定时钟）。
  */
 export function createIntentClassifier(deps: CreateIntentClassifierDeps): IntentClassifier {
-  const { client, queue } = deps;
+  const { client, queue, model } = deps;
   const now = deps.now ?? ((): number => Date.now());
 
   async function classify(text: string): Promise<IntentResult> {
@@ -115,7 +117,7 @@ export function createIntentClassifier(deps: CreateIntentClassifierDeps): Intent
 
     // 调用模型：有 queue 时经 enqueueImmediate 串行提交，否则直接调用。
     const callModel = (): Promise<unknown> =>
-      client.chatTextJson<unknown>({ system, user: text, temperature: 0 });
+      client.chatTextJson<unknown>({ system, user: text, temperature: 0, model });
 
     let raw: unknown;
     try {

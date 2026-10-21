@@ -19,6 +19,7 @@ import { loadCaptureConfig } from './capture/config.js';
 import { createFrameBroadcaster } from './capture/frame-broadcaster.js';
 import { eventLogs } from './db/schema.js';
 import { createLmStudioClient } from './ai/lmstudio.js';
+import { loadAiConfig } from './ai/config.js';
 import { createVisionParser } from './ai/vision-parser.js';
 import { createIntentClassifier } from './ai/intent-classifier.js';
 import { createItemParser } from './ai/item-parser.js';
@@ -69,11 +70,15 @@ async function start(): Promise<void> {
   // 先构造以便视觉入库管线复用，start/stop 在 app 构建后挂到 onClose。
   const aiQueue = createAiQueue({ db });
 
+  // AI 配置：load 一次，供各模块选择任务专用模型。
+  const aiConfig = loadAiConfig();
+
   // 视觉入库管线：同一 db + 一个 LM Studio 客户端 + aiQueue 构造识别器。
   // 识别任务经 visionParser 内部的 enqueueDeferred 串行化、空闲批处理，不阻塞门控/网关。
   const visionParser = createVisionParser({
     client: createLmStudioClient(),
     queue: aiQueue,
+    model: aiConfig.visionParseModel,
   });
   const visionIngest = createVisionIngest({ db, visionParser });
 
@@ -209,8 +214,16 @@ async function start(): Promise<void> {
   const commandAiClient = createLmStudioClient();
   const commandRouter = createCommandRouter({
     db,
-    classifier: createIntentClassifier({ client: commandAiClient, queue: aiQueue }),
-    itemParser: createItemParser({ client: commandAiClient, queue: aiQueue }),
+    classifier: createIntentClassifier({
+      client: commandAiClient,
+      queue: aiQueue,
+      model: aiConfig.intentModel,
+    }),
+    itemParser: createItemParser({
+      client: commandAiClient,
+      queue: aiQueue,
+      model: aiConfig.itemParseModel,
+    }),
     haClient,
     haConfig,
   });
@@ -219,6 +232,7 @@ async function start(): Promise<void> {
   const recipeRecommender = createRecipeRecommender({
     client: createLmStudioClient(),
     queue: aiQueue,
+    model: aiConfig.recipeModel,
   });
 
   let haSubscriber: HaEventSubscriber | undefined;
@@ -260,6 +274,7 @@ async function start(): Promise<void> {
     commandRouter,
     recipeRecommender,
     authConfig,
+    aiConfig,
     ...(haSubscriber ? { haSubscriber } : {}),
   });
 
