@@ -82,6 +82,9 @@ export default defineConfig({
       workbox: {
         // 仅预缓存静态资源；不对 /api 做运行时缓存，保证数据实时。
         globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'],
+        // 新版本 SW 跳过 waiting 并立即接管所有客户端，配合 autoUpdate 根治旧缓存残留、不及时更新的问题。
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],

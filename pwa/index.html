@@ -13,9 +13,97 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="description" content="SmartButler 家庭管家 — 食材/物品管理与到期提醒" />
     <title>SmartButler 家庭管家</title>
+    <!-- 启动占位样式：内联在 head，在 JS/CSS bundle 到达前即可生效，消除打开 PWA 时的白屏。
+         自给自足、不依赖 global.css 变量，颜色与 global.css 的 --color-bg/品牌色对齐。 -->
+    <style id="splash-style">
+      #app-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483000; /* 足够高，覆盖初始空白；React 挂载后由 main.tsx 主动移除 */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        /* 浅色：与 global.css --color-bg(#f2f8fa) 对齐 */
+        background: #f2f8fa;
+        color: #15242a;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', Roboto, sans-serif;
+      }
+      #app-splash .splash-logo {
+        width: 72px;
+        height: 72px;
+        display: block;
+      }
+      #app-splash .splash-name {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+      }
+      /* 轻量加载动画：蓝青脉动圆点（iOS 风蓝青 #0FB8C9） */
+      #app-splash .splash-dots {
+        display: flex;
+        gap: 8px;
+      }
+      #app-splash .splash-dots span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #0fb8c9;
+        animation: splash-pulse 1.2s ease-in-out infinite;
+      }
+      #app-splash .splash-dots span:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      #app-splash .splash-dots span:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+      @keyframes splash-pulse {
+        0%,
+        80%,
+        100% {
+          opacity: 0.25;
+          transform: scale(0.8);
+        }
+        40% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      /* 深色适配：与 global.css 暗色 --color-bg(#0c1619)、品牌亮青(#36d6e6) 对齐 */
+      @media (prefers-color-scheme: dark) {
+        #app-splash {
+          background: #0c1619;
+          color: #eaf2f4;
+        }
+        #app-splash .splash-dots span {
+          background: #36d6e6;
+        }
+      }
+      /* 尊重「减弱动态效果」：关闭动画，显示静态圆点 */
+      @media (prefers-reduced-motion: reduce) {
+        #app-splash .splash-dots span {
+          animation: none;
+          opacity: 0.6;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- 启动占位：在 React 挂载前显示品牌加载态；createRoot(#root).render() 会接管并替换其内容，
+           main.tsx 另在挂载后主动移除本节点与 #splash-style 作为保险。 -->
+      <div id="app-splash">
+        <img class="splash-logo" src="/favicon.svg" width="72" height="72" alt="SmartButler" />
+        <div class="splash-name">SmartButler</div>
+        <div class="splash-dots" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
