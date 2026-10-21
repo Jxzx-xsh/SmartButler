@@ -37,7 +37,7 @@ describe('POST /api/items/:id/consume', () => {
     expect(body.item.quantity).toBe(2);
   });
 
-  it('消耗到 0 返回 depleted=true、item 为 null，随后 GET 该物品为 404', async () => {
+  it('消耗到 0 返回 depleted=true、item 非 null 且 quantity=0，物品保留可查到', async () => {
     const item = createItem(db, { name: '牛奶', quantity: 1 });
     const res = await app.inject({
       method: 'POST',
@@ -46,14 +46,16 @@ describe('POST /api/items/:id/consume', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.depleted).toBe(true);
-    expect(body.item).toBeNull();
-    expect(body.message).toBe('已用完并移除');
+    expect(body.item).not.toBeNull();
+    expect(body.item.quantity).toBe(0);
+    expect(body.message).toBe('已用完，已移至已用完分组');
 
     const getRes = await app.inject({
       method: 'GET',
       url: `/api/items/${item.id}`,
     });
-    expect(getRes.statusCode).toBe(404);
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.json().quantity).toBe(0);
   });
 
   it("支持 eventType='discarded'", async () => {

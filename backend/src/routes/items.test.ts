@@ -218,6 +218,23 @@ describe('GET /api/items/expiring', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('已用完（quantity=0）的物品不出现在到期结果中', async () => {
+    const now = Date.now();
+    createItem(db, {
+      name: '已用完菠菜',
+      quantity: 0,
+      expiryDate: now + 1 * MS_PER_DAY,
+    });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/items/expiring?days=30',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(
+      res.json().some((r: { name: string }) => r.name === '已用完菠菜'),
+    ).toBe(false);
+  });
 });
 
 describe('GET /api/items/:id', () => {

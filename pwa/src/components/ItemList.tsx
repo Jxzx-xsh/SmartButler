@@ -29,6 +29,17 @@ export function ItemList({ onAdd, onEdit, onDelete }: ItemListProps) {
   const query = useItemsQuery(params);
   const items = query.data ?? [];
 
+  // 按数量分组：在用（quantity>0）在上，已用完（quantity===0）归到底部分区
+  const { inUse, depleted } = useMemo(() => {
+    const inUse: Item[] = [];
+    const depleted: Item[] = [];
+    for (const item of items) {
+      if (item.quantity > 0) inUse.push(item);
+      else depleted.push(item);
+    }
+    return { inUse, depleted };
+  }, [items]);
+
   return (
     <section>
       <div className={styles.toolbar}>
@@ -76,10 +87,26 @@ export function ItemList({ onAdd, onEdit, onDelete }: ItemListProps) {
       />
 
       <div className={styles.list}>
-        {items.map((item) => (
+        {inUse.map((item) => (
           <ItemCard key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} />
         ))}
       </div>
+
+      {depleted.length > 0 && (
+        <div className={styles.depletedSection}>
+          <h3 className={styles.sectionTitle}>已用完</h3>
+          <div className={styles.list}>
+            {depleted.map((item) => (
+              <ItemCard
+                key={item.id}
+                item={item}
+                onEdit={onEdit}
+                onDelete={onDelete}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

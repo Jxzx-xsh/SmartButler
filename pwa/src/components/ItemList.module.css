@@ -49,3 +49,23 @@
   display: grid;
   gap: 14px;
 }
+
+/* 已用完分区：与在用列表拉开间距，视觉低调 */
+.depletedSection {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.sectionTitle {
+  margin: 0 0 12px;
+  font-size: var(--font-footnote);
+  font-weight: 600;
+  color: var(--color-text-soft);
+  letter-spacing: 0.3px;
+}
+
+/* 已用完卡片整体淡显，仍可编辑/删除/补货 */
+.depletedSection .list {
+  opacity: 0.68;
+}

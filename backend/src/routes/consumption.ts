@@ -51,12 +51,13 @@ export async function consumptionRoutes(
       ...(body.eventType !== undefined ? { eventType: body.eventType } : {}),
     };
     const item = consumeItem(db, id, consumeOpts);
-    const depleted = item === null;
+    // 用完判定：物品仍存在且数量已归零（不再以 item===null 判断）
+    const depleted = item !== null && item.quantity === 0;
     return {
       item,
       consumed: true,
       depleted,
-      message: depleted ? '已用完并移除' : '已登记消耗',
+      message: depleted ? '已用完，已移至已用完分组' : '已登记消耗',
     };
   });
 

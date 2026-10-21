@@ -124,6 +124,12 @@ describe('listExpiringItems', () => {
     createItem(db, { name: '苹果', expiryDate: NOW + 10 * MS_PER_DAY });
     // 无到期日
     createItem(db, { name: '洗衣液' });
+    // 在窗口内但已用完（quantity=0），应被排除
+    createItem(db, {
+      name: '已用完菠菜',
+      quantity: 0,
+      expiryDate: NOW + 1 * MS_PER_DAY,
+    });
   });
 
   it('只返回 N 天内（含已过期）的物品，按到期日升序', () => {
@@ -139,6 +145,21 @@ describe('listExpiringItems', () => {
   it('范围外物品不出现', () => {
     const rows = listExpiringItems(db, 3, NOW);
     expect(rows.some((r) => r.name === '苹果')).toBe(false);
+  });
+
+  it('已用完（quantity=0）的物品即使在窗口内也不出现', () => {
+    const rows = listExpiringItems(db, 3, NOW);
+    expect(rows.some((r) => r.name === '已用完菠菜')).toBe(false);
+  });
+
+  it('同窗口内 quantity>0 的物品正常出现', () => {
+    createItem(db, {
+      name: '在用酸奶',
+      quantity: 1,
+      expiryDate: NOW + 1 * MS_PER_DAY,
+    });
+    const rows = listExpiringItems(db, 3, NOW);
+    expect(rows.some((r) => r.name === '在用酸奶')).toBe(true);
   });
 });
 
@@ -156,11 +177,12 @@ describe('consumeItem 消耗 / 用完登记', () => {
     expect(countExpiryRecords()).toBe(1);
   });
 
-  it('quantity=1 消耗后删除 item、返回 null，仍插一条记录', () => {
+  it('quantity=1 消耗后物品保留、数量归 0、返回非 null，仍插一条记录', () => {
     const item = createItem(db, { name: '牛奶', quantity: 1 });
     const result = consumeItem(db, item.id);
-    expect(result).toBeNull();
-    expect(getItem(db, item.id)).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.quantity).toBe(0);
+    expect(getItem(db, item.id)?.quantity).toBe(0);
     expect(countExpiryRecords()).toBe(1);
   });
 
@@ -171,11 +193,12 @@ describe('consumeItem 消耗 / 用完登记', () => {
     expect(countExpiryRecords()).toBe(1);
   });
 
-  it('减量超过库存时归零即删除、返回 null', () => {
+  it('减量超过库存时归零但保留、返回非 null，仍插一条记录', () => {
     const item = createItem(db, { name: '面包', quantity: 2 });
     const result = consumeItem(db, item.id, { quantity: 5 });
-    expect(result).toBeNull();
-    expect(getItem(db, item.id)).toBeNull();
+    expect(result).not.toBeNull();
+    expect(result?.quantity).toBe(0);
+    expect(getItem(db, item.id)?.quantity).toBe(0);
     expect(countExpiryRecords()).toBe(1);
   });
 
@@ -220,8 +243,10 @@ describe('listConsumptionHistory', () => {
 
   it('物品已删除后记录仍在、item_id 置 null、itemName 为 null', () => {
     const item = createItem(db, { name: '牛奶', quantity: 1 });
-    // quantity=1 消耗后物品被删除（ON DELETE SET NULL），记录仍在且 item_id 置 null
+    // 先消耗留痕（物品归零但保留），再真正删除物品（ON DELETE SET NULL），
+    // 记录仍在且 item_id 自动置 null
     consumeItem(db, item.id, { recordedAt: NOW });
+    deleteItem(db, item.id);
     const raw = db.select().from(expiryRecords).all();
     expect(raw).toHaveLength(1);
     expect(raw[0]?.itemId).toBeNull();

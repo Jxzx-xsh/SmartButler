@@ -24,6 +24,8 @@ export function ItemCard({ item, onEdit, onDelete }: ItemCardProps) {
   const consume = useConsumeItem();
   // 消耗请求进行中时禁用两个按钮，避免并发重复提交
   const consuming = consume.isPending;
+  // 已用完（数量<=0）不能再消耗，禁用两个消耗按钮
+  const depleted = item.quantity <= 0;
   return (
     <div className={`${styles.card} ${cardTone(item.daysUntilExpiry)}`}>
       <div className={styles.header}>
@@ -49,7 +51,7 @@ export function ItemCard({ item, onEdit, onDelete }: ItemCardProps) {
         <button
           type="button"
           className={`${styles.btn} ${styles.consume}`}
-          disabled={consuming}
+          disabled={consuming || depleted}
           onClick={() => consume.mutate({ id: item.id, body: { quantity: 1 } })}
         >
           用掉 1
@@ -57,7 +59,7 @@ export function ItemCard({ item, onEdit, onDelete }: ItemCardProps) {
         <button
           type="button"
           className={`${styles.btn} ${styles.consume}`}
-          disabled={consuming}
+          disabled={consuming || depleted}
           onClick={() =>
             consume.mutate({ id: item.id, body: { quantity: item.quantity } })
           }

@@ -6,7 +6,7 @@
  * 自动调用 computeExpiryDate 填充到期日。
  */
 
-import { and, asc, desc, eq, isNotNull, lte, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, lte, type SQL } from 'drizzle-orm';
 
 import type { AppDatabase } from './client.js';
 import {
@@ -119,7 +119,9 @@ export function deleteItem(db: AppDatabase, id: number): boolean {
 
 /**
  * 返回 N 天内到期的物品（含已过期），按到期日升序。
- * 判定：expiryDate 非空且 <= now + days * 一天毫秒。
+ * 判定：expiryDate 非空且 <= now + days * 一天毫秒，且 quantity > 0。
+ * 追加 quantity > 0 条件以排除已用完（quantity<=0）的物品，
+ * 这样到期看板 / 主动提醒 / HA 暴露等复用方都不会再提示已用完的物品。
  */
 export function listExpiringItems(
   db: AppDatabase,
@@ -130,7 +132,13 @@ export function listExpiringItems(
   return db
     .select()
     .from(items)
-    .where(and(isNotNull(items.expiryDate), lte(items.expiryDate, threshold)))
+    .where(
+      and(
+        isNotNull(items.expiryDate),
+        lte(items.expiryDate, threshold),
+        gt(items.quantity, 0),
+      ),
+    )
     .orderBy(asc(items.expiryDate))
     .all();
 }
@@ -151,9 +159,11 @@ export interface ConsumeItemOptions {
  * 登记物品消耗 / 用完。
  * 查 item：不存在直接返回 null 且不写任何记录；
  * 存在时按 next = max(0, quantity - qty) 计算剩余：
- *   - next === 0：删除该物品（用完），返回 null；
- *   - next  > 0：updateItem 扣减数量，返回更新后的记录。
- * 无论删除还是扣减，均向 expiryRecords 插入一条 { itemId, eventType } 留痕。
+ *   - next === 0：用完——不删除物品，将 quantity 置 0（刷新 updatedAt），
+ *     物品行保留并归入前端「已用完」分组，返回该物品（quantity=0，非 null）；
+ *   - next  > 0：扣减数量，返回更新后的记录。
+ * 无论归零还是扣减，均向 expiryRecords 插入一条 { itemId, eventType } 留痕。
+ * 真正删除物品走 deleteItem（仍触发 expiry_record.item_id 的 ON DELETE SET NULL）。
  */
 export function consumeItem(
   db: AppDatabase,
@@ -170,8 +180,8 @@ export function consumeItem(
   const eventType = opts.eventType ?? 'consumed';
   const next = Math.max(0, item.quantity - qty);
 
-  // 原子化「插记录 + 扣减/删除」：用完时先插记录再删 item，
-  // 依赖 expiry_record.item_id 的 ON DELETE SET NULL，删 item 后记录 item_id 自动置 null、留痕保留。
+  // 原子化「插记录 + 更新数量」：先插留痕记录，再把 quantity 置为 next（含归零）。
+  // 用完（next===0）也只是把数量置 0 并保留物品行，不再删除。
   return db.transaction((tx) => {
     tx.insert(expiryRecords)
       .values({
@@ -183,13 +193,7 @@ export function consumeItem(
       })
       .run();
 
-    if (next === 0) {
-      // 用完：删除物品并返回 null（记录已插，item_id 将被置 null）
-      tx.delete(items).where(eq(items.id, itemId)).run();
-      return null;
-    }
-
-    // 扣减数量，返回更新后的记录
+    // 更新数量（next 可能为 0，即用完后归入已用完分组），返回更新后的记录
     const rows = tx
       .update(items)
       .set({ quantity: next, updatedAt: Date.now() })
