@@ -86,6 +86,33 @@ export const expiryRecords = sqliteTable('expiry_record', {
     .$defaultFn(() => Date.now()),
 });
 
+/**
+ * 收藏食谱表：用户收藏模型推荐的家常菜。
+ *
+ * usedItems / missingItems / steps 均为“字符串数组”，SQLite 无数组类型，
+ * 故统一以 text 列存 JSON 文本（JSON.stringify 写入、JSON.parse 读出），
+ * 与全库 event_log.payload 等 JSON 文本列一致。
+ * 去重策略：允许重复收藏（name 为模型生成菜名、非稳定键），saveRecipe 每次新增一行。
+ */
+export const savedRecipes = sqliteTable('saved_recipe', {
+  /** 自增主键 */
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** 菜名，非空 */
+  name: text('name').notNull(),
+  /** 用到的家里食材（JSON 文本的字符串数组），非空 */
+  usedItems: text('used_items').notNull(),
+  /** 还需购买的食材（JSON 文本的字符串数组），可空 */
+  missingItems: text('missing_items'),
+  /** 烹饪步骤（JSON 文本的字符串数组），可空 */
+  steps: text('steps'),
+  /** 备注，可空 */
+  note: text('note'),
+  /** 收藏时间（毫秒时间戳），默认当前时间 */
+  createdAt: integer('created_at')
+    .notNull()
+    .$defaultFn(() => Date.now()),
+});
+
 /** 事件日志表：通用事件流水（语音/视觉/系统事件等） */
 export const eventLogs = sqliteTable('event_log', {
   /** 自增主键 */
@@ -115,10 +142,14 @@ export type NewExpiryRecord = typeof expiryRecords.$inferInsert;
 export type EventLog = typeof eventLogs.$inferSelect;
 export type NewEventLog = typeof eventLogs.$inferInsert;
 
+export type SavedRecipe = typeof savedRecipes.$inferSelect;
+export type NewSavedRecipe = typeof savedRecipes.$inferInsert;
+
 /** 聚合 schema 对象，供 drizzle 实例注入 */
 export const schema = {
   categories,
   items,
   expiryRecords,
   eventLogs,
+  savedRecipes,
 };

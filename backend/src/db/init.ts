@@ -56,6 +56,16 @@ export function initSchema(sqlite: Database.Database): void {
       source     TEXT,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS saved_recipe (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      name          TEXT NOT NULL,
+      used_items    TEXT NOT NULL,
+      missing_items TEXT,
+      steps         TEXT,
+      note          TEXT,
+      created_at    INTEGER NOT NULL
+    );
   `);
 }
 

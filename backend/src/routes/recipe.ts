@@ -15,7 +15,17 @@ import type { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import type { AppDatabase } from '../db/client.js';
 import type { RecipeRecommender } from '../ai/recipe.js';
 import { LmStudioError } from '../ai/errors.js';
-import { recipeRecommendQuerySchema } from '../http/schemas.js';
+import {
+  idParamSchema,
+  recipeRecommendQuerySchema,
+  saveRecipeBodySchema,
+} from '../http/schemas.js';
+import {
+  listSavedRecipes,
+  removeSavedRecipe,
+  saveRecipe,
+  type SaveRecipeInput,
+} from '../db/recipe-repo.js';
 
 /** 路由插件 opts：注入数据库与食谱推荐器。 */
 export interface RecipeRoutesOptions extends FastifyPluginOptions {
@@ -62,5 +72,38 @@ export async function recipeRoutes(
       // 其余错误重抛交全局处理器
       throw err;
     }
+  });
+
+  // POST /api/recipes/saved — 收藏一条食谱，成功返回 201
+  app.post('/api/recipes/saved', async (request, reply) => {
+    const body = saveRecipeBodySchema.parse(request.body);
+    // 仅透传已提供键，缺省交由仓储处理默认值
+    const input: SaveRecipeInput = {
+      name: body.name,
+      ...(body.usedItems !== undefined ? { usedItems: body.usedItems } : {}),
+      ...(body.missingItems !== undefined
+        ? { missingItems: body.missingItems }
+        : {}),
+      ...(body.steps !== undefined ? { steps: body.steps } : {}),
+      ...(body.note !== undefined ? { note: body.note } : {}),
+    };
+    return reply.code(201).send(saveRecipe(db, input));
+  });
+
+  // GET /api/recipes/saved — 列出全部收藏（按收藏时间倒序）
+  app.get('/api/recipes/saved', async () => {
+    return listSavedRecipes(db);
+  });
+
+  // DELETE /api/recipes/saved/:id — 删除收藏，不存在 404，成功返回 204
+  app.delete('/api/recipes/saved/:id', async (request, reply) => {
+    const { id } = idParamSchema.parse(request.params);
+    const ok = removeSavedRecipe(db, id);
+    if (!ok) {
+      return reply.code(404).send({
+        error: { message: '收藏不存在', code: 'SAVED_RECIPE_NOT_FOUND' },
+      });
+    }
+    return reply.code(204).send();
   });
 }

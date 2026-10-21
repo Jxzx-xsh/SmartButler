@@ -98,3 +98,98 @@ describe('GET /api/recipes/recommend', () => {
     expect(recommend).toHaveBeenCalledWith(db, { days: 3 });
   });
 });
+
+describe('收藏食谱端点 /api/recipes/saved', () => {
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    // saved 端点不依赖 recommender，用占位 fake 构造 app
+    app = buildWith({ recommend: vi.fn() });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app?.close();
+  });
+
+  it('POST 合法 body → 201 且含 id/createdAt、usedItems 为数组', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/recipes/saved',
+      payload: { name: '番茄炒蛋', usedItems: ['番茄', '鸡蛋'] },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.id).toBeTypeOf('number');
+    expect(body.createdAt).toBeTypeOf('number');
+    expect(body.usedItems).toEqual(['番茄', '鸡蛋']);
+  });
+
+  it('POST name 空 → 400 VALIDATION_ERROR', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/recipes/saved',
+      payload: { name: '   ' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('GET 空库 → 200 []', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/recipes/saved' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual([]);
+  });
+
+  it('POST 两条后 GET → 200 长度 2 且 createdAt 倒序', async () => {
+    await app.inject({
+      method: 'POST',
+      url: '/api/recipes/saved',
+      payload: { name: '早菜' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/api/recipes/saved',
+      payload: { name: '晚菜' },
+    });
+
+    const res = await app.inject({ method: 'GET', url: '/api/recipes/saved' });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json();
+    expect(rows).toHaveLength(2);
+    // 后收藏的在前（createdAt 倒序，同刻按 id 倒序兜底）
+    expect(rows[0].name).toBe('晚菜');
+    expect(rows[1].name).toBe('早菜');
+  });
+
+  it('DELETE 已存在 → 204 且随后 GET 少一条', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/recipes/saved',
+      payload: { name: '番茄炒蛋' },
+    });
+    const { id } = created.json();
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/recipes/saved/${id}`,
+    });
+    expect(res.statusCode).toBe(204);
+
+    const list = await app.inject({ method: 'GET', url: '/api/recipes/saved' });
+    expect(list.json()).toHaveLength(0);
+  });
+
+  it('DELETE 不存在 → 404 SAVED_RECIPE_NOT_FOUND', async () => {
+    const res = await app.inject({
+      method: 'DELETE',
+      url: '/api/recipes/saved/9999',
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('SAVED_RECIPE_NOT_FOUND');
+  });
+});

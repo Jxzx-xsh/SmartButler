@@ -149,3 +149,20 @@ export const recipeRecommendQuerySchema = z.object({
 
 /** 解析后的食谱推荐查询参数类型 */
 export type RecipeRecommendQuery = z.infer<typeof recipeRecommendQuerySchema>;
+
+/** POST /api/recipes/saved 请求体校验：收藏一条食谱 */
+export const saveRecipeBodySchema = z.object({
+  /** 菜名：必填非空（去除首尾空白后不为空） */
+  name: z.string().trim().min(1, 'name 不能为空'),
+  /** 用到的家里食材：可选字符串数组 */
+  usedItems: z.array(z.string()).optional(),
+  /** 还需购买的食材：可空可选字符串数组 */
+  missingItems: z.array(z.string()).nullable().optional(),
+  /** 烹饪步骤：可空可选字符串数组 */
+  steps: z.array(z.string()).nullable().optional(),
+  /** 备注：可空可选 */
+  note: z.string().nullable().optional(),
+});
+
+/** 解析后的收藏食谱请求体类型 */
+export type SaveRecipeBody = z.infer<typeof saveRecipeBodySchema>;
