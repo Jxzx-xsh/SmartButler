@@ -181,6 +181,45 @@ describe('chatTextJson', () => {
       kind: 'bad_response',
     });
   });
+
+  it('容错解析：多个顶层对象拆段输出时按键合并（小模型常见失败模式）', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content:
+              '{"thinking":"优先用掉牛奶"}\n{\n  "recipes": [{"name":"番茄炒蛋","usedItems":["番茄"]}]\n}',
+          },
+        },
+      ],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatTextJson<{ thinking: string; recipes: Array<{ name: string }> }>({
+      user: 'x',
+    });
+    expect(out.thinking).toBe('优先用掉牛奶');
+    expect(out.recipes).toHaveLength(1);
+    expect(out.recipes[0]?.name).toBe('番茄炒蛋');
+  });
+
+  it('容错解析：字符串值内含花括号不影响结构扫描', async () => {
+    const chatCreate = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: '{"thinking":"格式是 {thinking, recipes} 这样的","recipes":[]}',
+          },
+        },
+      ],
+    });
+    const { openai } = makeFakeOpenai({ chatCreate });
+    const client = createLmStudioClient({ config: testConfig, openai });
+
+    const out = await client.chatTextJson<{ thinking: string }>({ user: 'x' });
+    expect(out.thinking).toBe('格式是 {thinking, recipes} 这样的');
+  });
 });
 
 describe('chatVision', () => {

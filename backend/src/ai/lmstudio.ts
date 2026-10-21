@@ -250,36 +250,94 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
     // 用 text 格式，依赖调用方在提示词里约束模型"只输出 JSON"，再在本函数做容错解析。
     const text = await chatText({ ...opts, responseFormat: { type: 'text' } });
     try {
-      return JSON.parse(extractJson(text)) as T;
+      return parseJsonFromText<T>(text);
     } catch (err) {
+      // 小模型输出不稳定，留下原始返回便于排查截断/非 JSON 等失败模式
+      console.error('[lmstudio] JSON 解析失败，模型原始返回：', text.slice(0, 1000));
       throw new LmStudioError('LM Studio 返回的 JSON 解析失败', 'bad_response', err);
     }
   }
 
   /**
-   * 从模型文本输出中提取 JSON 字符串。
-   * 容错处理：剥离可能的 markdown 代码块包裹（```json ... ```），
-   * 并截取首个 { 或 [ 到对应末尾 } 或 ] 之间的内容，兼容模型偶尔附带的前后缀文字。
+   * 从模型文本输出中解析 JSON。
+   * 容错处理：
+   * 1. 剥离可能的 markdown 代码块围栏（```json ... ```）与前后缀文字；
+   * 2. 扫描所有顶层平衡括号结构（对象/数组）逐个解析，跳过无法解析的片段；
+   * 3. 解析出多个顶层对象时合并为一个 —— 小模型偶尔会把
+   *    {"thinking":...} 与 {"recipes":...} 拆成两段输出。
+   * 没有任何可解析结构时抛 SyntaxError，由调用方映射为 bad_response。
    */
-  function extractJson(text: string): string {
-    let s = text.trim();
-    // 剥离 markdown 代码块围栏
-    s = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    // 截取首个 JSON 结构（对象或数组）
-    const firstObj = s.indexOf('{');
-    const firstArr = s.indexOf('[');
-    const starts = [firstObj, firstArr].filter((i) => i >= 0);
-    if (starts.length === 0) {
-      return s;
+  function parseJsonFromText<T>(text: string): T {
+    const stripped = text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '');
+
+    // 扫描顶层平衡结构（需跟踪字符串态，忽略串内括号）
+    const candidates: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < stripped.length; i++) {
+      const ch = stripped[i];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{' || ch === '[') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (ch === '}' || ch === ']') {
+        if (depth > 0) {
+          depth--;
+          if (depth === 0 && start >= 0) {
+            candidates.push(stripped.slice(start, i + 1));
+            start = -1;
+          }
+        }
+      }
     }
-    const start = Math.min(...starts);
-    const lastObj = s.lastIndexOf('}');
-    const lastArr = s.lastIndexOf(']');
-    const end = Math.max(lastObj, lastArr);
-    if (end > start) {
-      return s.slice(start, end + 1);
+
+    // 没有任何 JSON 结构：整体尝试一次（会得到标准 SyntaxError）
+    if (candidates.length === 0) {
+      return JSON.parse(stripped) as T;
     }
-    return s;
+
+    const parsed: unknown[] = [];
+    for (const candidate of candidates) {
+      try {
+        parsed.push(JSON.parse(candidate));
+      } catch {
+        // 单个片段无法解析不致命，跳过看其余片段
+      }
+    }
+    if (parsed.length === 0) {
+      throw new SyntaxError('模型输出中没有可解析的 JSON');
+    }
+    if (parsed.length === 1) {
+      return parsed[0] as T;
+    }
+    // 多个顶层结果：均为纯对象时按键合并；否则取第一个
+    const allPlainObjects = parsed.every(
+      (p) => typeof p === 'object' && p !== null && !Array.isArray(p),
+    );
+    if (allPlainObjects) {
+      return Object.assign({}, ...(parsed as object[])) as T;
+    }
+    return parsed[0] as T;
   }
 
   async function chatVision(opts: ChatVisionOptions): Promise<string> {
@@ -304,12 +362,13 @@ export function createLmStudioClient(deps: CreateLmStudioClientDeps = {}): LmStu
   }
 
   async function chatVisionJson<T = unknown>(opts: ChatVisionOptions): Promise<T> {
-    // 复用 chatVision 取文本，再经同一闭包内 extractJson 容错剥壳后 JSON.parse，
+    // 复用 chatVision 取文本，再经同一闭包内 parseJsonFromText 容错解析，
     // 失败按 bad_response 处理（与 chatTextJson 行为一致）。
     const text = await chatVision(opts);
     try {
-      return JSON.parse(extractJson(text)) as T;
+      return parseJsonFromText<T>(text);
     } catch (err) {
+      console.error('[lmstudio] 视觉 JSON 解析失败，模型原始返回：', text.slice(0, 1000));
       throw new LmStudioError('LM Studio 视觉返回的 JSON 解析失败', 'bad_response', err);
     }
   }

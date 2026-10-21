@@ -155,12 +155,12 @@ describe('createRecipeRecommender.recommend', () => {
     expect(systemDays7).toContain('牛奶（优先用掉）');
   });
 
-  it('注入 queue 时经 enqueueImmediate 提交', async () => {
+  it('注入 queue 时仍直接调用模型（绕开 queue，避免被 deferred 任务阻塞）', async () => {
     createItem(db, { name: '牛奶', expiryDate: FIXED_NOW + MS_PER_DAY });
     const chatTextJson = vi.fn().mockResolvedValue({
       recipes: [{ name: '牛奶炖蛋', usedItems: ['牛奶'] }],
     });
-    // fake 队列：enqueueImmediate 直接执行传入任务的 run
+    // fake 队列：若被调用则直接执行；本测试断言它不会被调用
     const enqueueImmediate = vi.fn(
       async <T>(task: { run: () => Promise<T> }): Promise<T> => task.run(),
     );
@@ -174,7 +174,9 @@ describe('createRecipeRecommender.recommend', () => {
 
     const result = await recommender.recommend(db);
 
-    expect(enqueueImmediate).toHaveBeenCalledTimes(1);
+    // queue 中 deferred 的 vision-parser 可能占住 worker 导致 immediate 超时，
+    // recipe 不走 queue，直接调用模型
+    expect(enqueueImmediate).not.toHaveBeenCalled();
     expect(chatTextJson).toHaveBeenCalledTimes(1);
     expect(result.recipes[0]?.name).toBe('牛奶炖蛋');
   });
