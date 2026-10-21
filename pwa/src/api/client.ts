@@ -7,6 +7,8 @@ import type {
   Item,
   ListItemsParams,
   RecipeResult,
+  SaveRecipeBody,
+  SavedRecipe,
   UpdateItemBody,
 } from './types';
 
@@ -180,6 +182,14 @@ export const recipesApi = {
   /** 基于家里食材推荐家常菜（days 控制临期判定窗口，缺省后端默认 3）。 */
   recommend: (days?: number) =>
     request<RecipeResult>('/api/recipes/recommend', { query: { days } }),
+  /** 收藏一道食谱（允许重复，每次新增一条）。 */
+  saveRecipe: (body: SaveRecipeBody) =>
+    request<SavedRecipe>('/api/recipes/saved', { method: 'POST', body }),
+  /** 读取已收藏食谱列表（后端按收藏时间倒序）。 */
+  listSaved: () => request<SavedRecipe[]>('/api/recipes/saved'),
+  /** 删除一条收藏。 */
+  removeSaved: (id: number) =>
+    request<void>(`/api/recipes/saved/${id}`, { method: 'DELETE' }),
 };
 
 /** 分类相关接口薄封装。 */

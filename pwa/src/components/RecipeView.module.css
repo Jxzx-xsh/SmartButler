@@ -126,3 +126,53 @@
   border-radius: var(--radius-sm);
   line-height: 1.5;
 }
+
+/* 分区（推荐食谱 / 我的收藏）：小标题 + 内容纵向堆叠 */
+.section {
+  display: grid;
+  gap: 12px;
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--font-headline);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* 推荐卡片内的收藏按钮：描边蓝青次要按钮 */
+.saveBtn {
+  justify-self: start;
+  padding: 10px 18px;
+  min-height: 44px;
+  border-radius: var(--radius);
+  font-size: var(--font-body);
+  font-weight: 600;
+  border: 1px solid var(--color-primary);
+  background: transparent;
+  color: var(--color-primary);
+}
+
+.saveBtn:disabled {
+  opacity: 0.6;
+}
+
+/* 已收藏时间：弱化文案 */
+.savedTime {
+  margin: 0;
+  font-size: var(--font-footnote);
+  color: var(--color-text-soft);
+}
+
+/* 收藏卡片删除按钮：描边弱化，破坏性操作走 ConfirmDialog 二次确认 */
+.deleteBtn {
+  justify-self: start;
+  padding: 10px 18px;
+  min-height: 44px;
+  border-radius: var(--radius);
+  font-size: var(--font-body);
+  font-weight: 600;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-soft);
+}

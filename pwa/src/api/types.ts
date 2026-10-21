@@ -86,6 +86,27 @@ export interface RecipeResult {
   recipes: Recipe[];
 }
 
+/** 已收藏的食谱（GET /api/recipes/saved 返回，对齐后端 SavedRecipeView）。 */
+export interface SavedRecipe {
+  id: number;
+  name: string;
+  usedItems: string[];
+  missingItems: string[] | null;
+  steps: string[] | null;
+  note: string | null;
+  /** 收藏时间，Unix 毫秒整数 */
+  createdAt: number;
+}
+
+/** 收藏食谱请求体（POST /api/recipes/saved）：name 必填，其余可选。 */
+export interface SaveRecipeBody {
+  name: string;
+  usedItems?: string[];
+  missingItems?: string[] | null;
+  steps?: string[] | null;
+  note?: string | null;
+}
+
 /** 后端错误响应体。 */
 export interface ApiErrorBody {
   error: {
