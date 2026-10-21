@@ -50,6 +50,30 @@
   line-height: 1.6;
 }
 
+/* 模型推荐思路（思考过程） */
+.reasoning {
+  background: var(--color-surface);
+  border: 1px dashed var(--color-primary);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 8px;
+}
+
+.reasoningLabel {
+  font-size: var(--font-footnote);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.reasoning p {
+  margin: 0;
+  font-size: var(--font-body);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
 /* 菜谱列表 */
 .list {
   display: grid;

@@ -36,6 +36,8 @@ export interface Recipe {
 
 /** 食谱推荐结果。 */
 export interface RecipeResult {
+  /** 模型的思考/推荐理由，解释为什么选这些菜（可能为空） */
+  thinking?: string;
   recipes: Recipe[];
 }
 
@@ -114,9 +116,10 @@ function buildSystemPrompt(
     `当前日期：${ctx.date}（${ctx.weekday}）。`,
     `家里现有食材：${pantryText || '（无）'}`,
     '要求：优先用掉标注「优先用掉」的临期食材；每道菜尽量用现有食材，缺的食材列进 missingItems；只推家常易做的菜，共 2-4 道。',
+    '先写一段简短的思考过程（thinking 字段），说清你优先用了哪些临期食材、为什么选这些菜；再输出菜谱。',
     '只输出严格 JSON，不要 markdown、不要多余解释。格式：',
-    '{"recipes":[{"name":"菜名","usedItems":["用到的现有食材"],"missingItems":["需另购食材"],"steps":["简要步骤"],"note":"备注"}]}',
-    '示例：{"recipes":[{"name":"番茄炒蛋","usedItems":["番茄","鸡蛋"],"missingItems":["葱"],"steps":["鸡蛋打散炒熟盛出","番茄翻炒出汁","倒入鸡蛋加盐翻匀"],"note":"家常快手菜"}]}',
+    '{"thinking":"你的推荐理由","recipes":[{"name":"菜名","usedItems":["用到的现有食材"],"missingItems":["需另购食材"],"steps":["简要步骤"],"note":"备注"}]}',
+    '示例：{"thinking":"家里鸡蛋和番茄都临期了，先做番茄炒蛋快速消耗；剩下的黄瓜凉拌清爽","recipes":[{"name":"番茄炒蛋","usedItems":["番茄","鸡蛋"],"missingItems":["葱"],"steps":["鸡蛋打散炒熟盛出","番茄翻炒出汁","倒入鸡蛋加盐翻匀"],"note":"家常快手菜"}]}',
   ].join('\n');
 }
 
@@ -129,8 +132,9 @@ const zRawRecipe = z.object({
   note: z.string().optional().nullable(),
 });
 
-/** 模型返回整体结构：{ recipes: RawRecipe[] }。 */
+/** 模型返回整体结构：{ thinking?, recipes: RawRecipe[] }。 */
 const zRawResponse = z.object({
+  thinking: z.string().optional().nullable(),
   recipes: z.array(zRawRecipe),
 });
 
@@ -160,12 +164,11 @@ export function createRecipeRecommender(
     const system = buildSystemPrompt(ctx, pantry);
     const user = '请根据以上食材推荐家常菜。';
 
-    // 调用模型：有 queue 时经 enqueueImmediate 串行提交，否则直接调用
+    // 调用模型：recipe 不走 queue（queue 里 deferred 的 vision-parser 可能占着 worker
+    // 导致 immediate 被延迟执行、模型超时返回空）。直接调用即可。
     const callModel = (): Promise<unknown> =>
       client.chatTextJson<unknown>({ system, user, temperature: 0, model });
-    const raw = queue
-      ? await queue.enqueueImmediate<unknown>({ run: callModel, meta: { kind: 'recipe' } })
-      : await callModel();
+    const raw = await callModel();
 
     // 校验模型返回结构；非法（recipes 非数组等）抛 bad_response
     const parsed = zRawResponse.safeParse(raw);
@@ -205,7 +208,12 @@ export function createRecipeRecommender(
       recipes.push(recipe);
     }
 
-    return { recipes };
+    const thinking =
+      parsed.data.thinking !== null && parsed.data.thinking !== undefined
+        ? parsed.data.thinking.trim() || undefined
+        : undefined;
+
+    return thinking ? { thinking, recipes } : { recipes };
   }
 
   return { recommend };
