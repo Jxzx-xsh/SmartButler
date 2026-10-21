@@ -50,7 +50,7 @@ export default defineConfig({
         'favicon-32.png',
       ],
       manifest: {
-        name: 'SmartButler 家庭管家',
+        name: 'SmartButler',
         short_name: 'SmartButler',
         description: '家庭食材/物品管理与到期提醒',
         lang: 'zh-CN',

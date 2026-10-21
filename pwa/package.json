@@ -1,7 +1,7 @@
 {
   "name": "smartbutler-pwa",
   "version": "0.1.0",
-  "description": "SmartButler 家庭管家 PWA — 物品管理（手动录入 + 到期看板）",
+  "description": "SmartButler PWA — 物品管理（手动录入 + 到期看板）",
   "private": true,
   "type": "module",
   "scripts": {

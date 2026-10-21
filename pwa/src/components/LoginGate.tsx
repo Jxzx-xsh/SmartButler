@@ -38,7 +38,7 @@ export function LoginGate({ onSuccess }: LoginGateProps) {
   return (
     <div className={styles.overlay}>
       <form className={styles.card} onSubmit={handleSubmit}>
-        <div className={styles.brand}>SmartButler 家庭管家</div>
+        <div className={styles.brand}>SmartButler</div>
         <p className={styles.hint}>请输入访问密码以继续</p>
 
         <input

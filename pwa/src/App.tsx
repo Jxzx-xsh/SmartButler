@@ -63,7 +63,7 @@ export default function App() {
       <header className={styles.header}>
         <div className={styles.headerTop}>
           <div>
-            <div className={styles.title}>SmartButler 家庭管家</div>
+            <div className={styles.title}>SmartButler</div>
             <p className={styles.subtitle}>食材到期提醒与物品管理</p>
           </div>
           <button type="button" className={styles.logout} onClick={handleLogout}>
