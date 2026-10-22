@@ -84,7 +84,6 @@ export function ItemList({ onAdd, onEdit, onDelete }: ItemListProps) {
         isEmpty={!query.isLoading && !query.error && items.length === 0}
         emptyText="暂无物品"
         onRetry={() => void query.refetch()}
-        fullscreen
       />
 
       <div className={styles.list}>
