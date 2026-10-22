@@ -35,6 +35,12 @@ const JPEG_EOI_1 = 0xd9;
  */
 const STOP_KILL_TIMEOUT_MS = 2000;
 
+/**
+ * 看门狗检查粒度（毫秒）：每隔这么久检查一次 connected 状态下是否长时间无新帧。
+ * 取值远小于 stallTimeoutMs 默认值，保证僵死能被及时发现。
+ */
+const WATCHDOG_TICK_MS = 2000;
+
 /** 网关运行状态机。 */
 export type CaptureState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'stopped';
 
@@ -78,8 +84,13 @@ export interface CaptureGatewayOptions {
   fps?: number;
   /** 断线重连前等待毫秒数，缺省 2000 */
   reconnectDelayMs?: number;
-  /** 自动重连最大次数，缺省 10；达到上限后停止自动重连 */
+  /** 自动重连最大次数，缺省 10；达到上限后停止自动重连。负数表示无限重连 */
   maxReconnects?: number;
+  /**
+   * 僵死判定阈值毫秒数，缺省 10000；connected 状态下超过该时长无新帧即判定为
+   * 半开连接僵死，强杀 ffmpeg 触发重连。0 或负数关闭看门狗。
+   */
+  stallTimeoutMs?: number;
   /** 完整一帧 JPEG 回调：buffer 为单帧字节，timestamp 为 Date.now() */
   onFrame?: (buffer: Buffer, timestamp: number) => void;
   /** 音频 PCM chunk 回调：pcmChunk 为 s16le 字节，timestamp 为 Date.now() */
@@ -103,6 +114,7 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   const fps = options.fps ?? 2;
   const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
   const maxReconnects = options.maxReconnects ?? 10;
+  const stallTimeoutMs = options.stallTimeoutMs ?? 10000;
   const spawnFn = options.spawnFn ?? spawn;
 
   // 回调（均可选，缺省空实现，调用处无需判空）
@@ -124,6 +136,14 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   let manualStop = false; // stop() 置位，用于区分“手动停止”与“异常退出”
   let running = false; // start() 后置位，用于 start 幂等
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * 内部「最近活动时刻」：每次连接建立或切出一帧时刷新，供看门狗判定僵死。
+   * 与对外指标 lastFrameAt 解耦——重连后旧帧时间已无参考意义，而 lastFrameAt
+   * 需保留「最近一次真实出帧」语义供 /api/capture/status 观测。
+   */
+  let lastActivityAt = 0;
 
   // 视频帧增量解析缓冲：累积 stdout chunk，按 SOI/EOI 切帧
   let frameBuffer: Buffer = Buffer.alloc(0);
@@ -161,6 +181,8 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
       const frameCopy = Buffer.from(frame);
       latestFrame = frameCopy;
       lastFrameAt = Date.now();
+      // 看门狗活性信号：有帧产出说明拉流链路仍活着
+      lastActivityAt = lastFrameAt;
       frameCount += 1;
       onFrame(frameCopy, lastFrameAt);
 
@@ -243,10 +265,53 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   /** 同时拉起两路子进程，并把状态置为 connected。 */
   function spawnBoth(): void {
     frameBuffer = Buffer.alloc(0);
+    // 连接建立即视为一次活动起点：设备正常时应很快出首帧，迟迟无帧由看门狗接管
+    lastActivityAt = Date.now();
     spawnVideo();
     spawnAudio();
     // 两进程均已成功构造（spawn 失败走异步 error 事件），标记为已连接
     state = 'connected';
+    startWatchdog();
+  }
+
+  /**
+   * 启动看门狗：connected 状态下定期检查最近活动时刻，超时判定为「半开连接僵死」。
+   *
+   * 为什么需要：ffmpeg 与手机 IP Webcam 之间的连接可能半开——TCP 未断、进程仍存活，
+   * 但不再产出任何数据。此时子进程不会触发 'close'/'error'，仅靠事件驱动的重连
+   * 永远不会发生，网关会一直显示 connected 却再无新帧。看门狗用「主动超时」兜住
+   * 这类沉默故障：强杀两路子进程，交给既有重连流程重新拉起。
+   *
+   * stallTimeoutMs ≤ 0 时关闭（测试或特殊部署可显式禁用）。
+   */
+  function startWatchdog(): void {
+    stopWatchdog();
+    if (stallTimeoutMs <= 0) {
+      return;
+    }
+    const timer = setInterval(() => {
+      // 仅在 connected 状态判定：connecting/reconnecting/stopped 不由看门狗干预
+      if (state !== 'connected') {
+        return;
+      }
+      if (Date.now() - lastActivityAt <= stallTimeoutMs) {
+        return;
+      }
+      // 僵死：进程可能仍存活，必须主动 kill 才能腾出句柄重新拉流
+      killProcs();
+      scheduleReconnect();
+    }, WATCHDOG_TICK_MS);
+    // unref：看门狗只为运行中的网关服务，不应阻止 Node 进程退出（测试更友好）
+    timer.unref?.();
+    watchdogTimer = timer;
+  }
+
+  /** 停止看门狗（幂等）。 */
+  function stopWatchdog(): void {
+    if (watchdogTimer !== null) {
+      clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
   }
 
   /**
@@ -281,7 +346,8 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
       return;
     }
     // 已达上限：停止自动重连，保持 reconnecting->? 可观测，等待手动再 start()
-    if (reconnectAttempts >= maxReconnects) {
+    // maxReconnects < 0 表示无限重连（家用设备常掉线，不应耗尽次数后永久放弃）
+    if (maxReconnects >= 0 && reconnectAttempts >= maxReconnects) {
       state = 'reconnecting';
       return;
     }
@@ -346,6 +412,9 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
     // 置手动停止标志，使后续 close/error 不再触发重连
     manualStop = true;
     running = false;
+
+    // 停掉看门狗：停止后不再判定僵死，避免其再拉起进程
+    stopWatchdog();
 
     // 清除待定重连定时器，避免重连竞态并打断重连循环
     if (reconnectTimer !== null) {

@@ -47,6 +47,15 @@ function makeJpeg(payload: number[] = [0x01, 0x02, 0x03]): Buffer {
   return Buffer.from([0xff, 0xd8, ...payload, 0xff, 0xd9]);
 }
 
+/** 取第 idx 个 fake 子进程；越界直接抛错（兼容 noUncheckedIndexedAccess 的 undefined 推断）。 */
+function childAt(children: FakeChild[], idx: number): FakeChild {
+  const child = children[idx];
+  if (child === undefined) {
+    throw new Error(`测试缺少第 ${idx} 个 fake 子进程`);
+  }
+  return child;
+}
+
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
@@ -395,5 +404,133 @@ describe('getStatus 初始指标', () => {
     expect(s.audioBytes).toBe(0);
     expect(s.reconnectAttempts).toBe(0);
     expect(gw.getLatestFrame()).toBeNull();
+  });
+});
+
+describe('createCaptureGateway 看门狗', () => {
+  it('connected 状态超 stallTimeoutMs 无新帧：强杀两路子进程并触发重连', () => {
+    vi.useFakeTimers();
+    const children = [new FakeChild(), new FakeChild(), new FakeChild(), new FakeChild()];
+    const { spawnFn, mock } = makeSpawnFn(children);
+    const gw = createCaptureGateway({
+      sourceUrl: 'rtsp://192.168.1.107:8080/h264_ulaw.sdp',
+      reconnectDelayMs: 1000,
+      stallTimeoutMs: 5000,
+      spawnFn,
+    });
+    gw.start();
+    // 视频 + 音频两路各 spawn 一次
+    expect(mock).toHaveBeenCalledTimes(2);
+
+    // 4s 内（未超阈值）看门狗不动作
+    vi.advanceTimersByTime(4000);
+    expect(childAt(children, 0).killed).toBe(false);
+    expect(childAt(children, 1).killed).toBe(false);
+    expect(gw.getStatus().state).toBe('connected');
+
+    // 累计 6s > stallTimeoutMs(5s)：判定半开连接僵死，强杀两路并进入重连
+    vi.advanceTimersByTime(2000);
+    expect(childAt(children, 0).killed).toBe(true);
+    expect(childAt(children, 1).killed).toBe(true);
+    expect(gw.getStatus().state).toBe('reconnecting');
+
+    // 推进 reconnectDelayMs：重新拉起两路，状态回到 connected
+    vi.advanceTimersByTime(1000);
+    expect(mock).toHaveBeenCalledTimes(4);
+    expect(gw.getStatus().state).toBe('connected');
+  });
+
+  it('持续出帧时看门狗不误判（每帧刷新活动时刻）', () => {
+    vi.useFakeTimers();
+    const children = [new FakeChild(), new FakeChild()];
+    const { spawnFn } = makeSpawnFn(children);
+    const gw = createCaptureGateway({
+      sourceUrl: 'rtsp://host/stream',
+      reconnectDelayMs: 1000,
+      stallTimeoutMs: 5000,
+      spawnFn,
+    });
+    gw.start();
+
+    // 每 2s 一帧，跨 10s（远超阈值总时长）仍应保持 connected
+    for (let i = 0; i < 5; i += 1) {
+      childAt(children, 0).stdout.emit('data', makeJpeg());
+      vi.advanceTimersByTime(2000);
+    }
+
+    expect(childAt(children, 0).killed).toBe(false);
+    expect(gw.getStatus().state).toBe('connected');
+    expect(gw.getStatus().frameCount).toBe(5);
+  });
+
+  it('stop() 后看门狗停止，不再拉起新进程', async () => {
+    vi.useFakeTimers();
+    const children = [new FakeChild(), new FakeChild(), new FakeChild(), new FakeChild()];
+    const { spawnFn, mock } = makeSpawnFn(children);
+    const gw = createCaptureGateway({
+      sourceUrl: 'rtsp://host/stream',
+      reconnectDelayMs: 100,
+      stallTimeoutMs: 1000,
+      spawnFn,
+    });
+    gw.start();
+    await gw.stop();
+
+    const spawnCountAfterStop = mock.mock.calls.length;
+    // 远超僵死阈值：若看门狗仍在跑会强杀并重新 spawn
+    vi.advanceTimersByTime(10000);
+    expect(mock.mock.calls.length).toBe(spawnCountAfterStop);
+    expect(gw.getStatus().state).toBe('stopped');
+  });
+
+  it('stallTimeoutMs 为 0 时关闭看门狗：超时无帧也不触发重连', () => {
+    vi.useFakeTimers();
+    const children = [new FakeChild(), new FakeChild()];
+    const { spawnFn, mock } = makeSpawnFn(children);
+    const gw = createCaptureGateway({
+      sourceUrl: 'rtsp://host/stream',
+      reconnectDelayMs: 1000,
+      stallTimeoutMs: 0,
+      spawnFn,
+    });
+    gw.start();
+
+    vi.advanceTimersByTime(60000);
+    expect(childAt(children, 0).killed).toBe(false);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(gw.getStatus().state).toBe('connected');
+  });
+});
+
+describe('createCaptureGateway 无限重连', () => {
+  it('maxReconnects 为负数：断线次数不限，始终回到 connected', () => {
+    vi.useFakeTimers();
+    const children: FakeChild[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      children.push(new FakeChild());
+    }
+    const { spawnFn, mock } = makeSpawnFn(children);
+    const gw = createCaptureGateway({
+      sourceUrl: 'rtsp://host/stream',
+      reconnectDelayMs: 1000,
+      // 负数 = 无限重连；关闭看门狗以免干扰本测试的重连计数
+      maxReconnects: -1,
+      stallTimeoutMs: 0,
+      spawnFn,
+    });
+    gw.start();
+    expect(mock).toHaveBeenCalledTimes(2);
+
+    // 连续断线 6 次（远超 maxReconnects 缺省 10 的一半，但关键是远少于「无限」）
+    for (let i = 0; i < 6; i += 1) {
+      // 第 i 轮的视频进程在 children[2i]
+      childAt(children, i * 2).emit('close');
+      vi.advanceTimersByTime(1000);
+    }
+
+    expect(gw.getStatus().state).toBe('connected');
+    expect(gw.getStatus().reconnectAttempts).toBe(6);
+    // 每次重连各 spawn 视频 + 音频
+    expect(mock).toHaveBeenCalledTimes(2 + 6 * 2);
   });
 });

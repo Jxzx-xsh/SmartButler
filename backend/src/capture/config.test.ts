@@ -43,10 +43,20 @@ describe('loadCaptureConfig', () => {
     expect(loadCaptureConfig({ CAPTURE_RECONNECT_DELAY_MS: '0' }).reconnectDelayMs).toBe(2000);
   });
 
-  it('CAPTURE_MAX_RECONNECTS：0 合法（不自动重连），负数/非法回退默认 10', () => {
+  it('CAPTURE_MAX_RECONNECTS：0 合法（不自动重连），负数归一为 -1（无限重连），非法回退默认 10', () => {
     expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: '0' }).maxReconnects).toBe(0);
-    expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: '-5' }).maxReconnects).toBe(10);
+    expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: '-1' }).maxReconnects).toBe(-1);
+    expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: '-5' }).maxReconnects).toBe(-1);
     expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: 'foo' }).maxReconnects).toBe(10);
+    expect(loadCaptureConfig({ CAPTURE_MAX_RECONNECTS: '' }).maxReconnects).toBe(10);
+  });
+
+  it('CAPTURE_STALL_TIMEOUT_MS：缺省 10000，0 合法（关闭看门狗），非法回退默认', () => {
+    expect(loadCaptureConfig({}).stallTimeoutMs).toBe(10000);
+    expect(loadCaptureConfig({ CAPTURE_STALL_TIMEOUT_MS: '0' }).stallTimeoutMs).toBe(0);
+    expect(loadCaptureConfig({ CAPTURE_STALL_TIMEOUT_MS: '2500' }).stallTimeoutMs).toBe(2500);
+    expect(loadCaptureConfig({ CAPTURE_STALL_TIMEOUT_MS: 'abc' }).stallTimeoutMs).toBe(10000);
+    expect(loadCaptureConfig({ CAPTURE_STALL_TIMEOUT_MS: '' }).stallTimeoutMs).toBe(10000);
   });
 
   it('空 sourceUrl：显式空串保持为空串', () => {
