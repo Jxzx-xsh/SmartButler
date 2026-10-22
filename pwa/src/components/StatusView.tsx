@@ -1,4 +1,3 @@
-import { createPortal } from 'react-dom';
 import styles from './StatusView.module.css';
 
 interface StatusViewProps {
@@ -7,9 +6,6 @@ interface StatusViewProps {
   isEmpty?: boolean;
   emptyText?: string;
   onRetry?: () => void;
-  /** 为 true 时全屏遮罩展示 loading / 错误，覆盖 header/tabbar。用于首屏数据加载。
-   *  使用 React Portal 渲染到 document.body，彻底脱离 .app 的 max-width/flex 等约束。 */
-  fullscreen?: boolean;
 }
 
 /** 从未知错误里提取中文可读信息。 */
@@ -25,24 +21,18 @@ export function StatusView({
   isEmpty,
   emptyText = '暂无数据',
   onRetry,
-  fullscreen,
 }: StatusViewProps) {
   if (isLoading) {
-    const node = (
-      <div
-        className={`${styles.status} ${fullscreen ? styles.fullscreen : ''}`}
-      >
+    return (
+      <div className={styles.status}>
         <span className={styles.spinner} aria-hidden="true" />
         <span className={styles.statusText}>加载中…</span>
       </div>
     );
-    return fullscreen ? createPortal(node, document.body) : node;
   }
   if (error) {
-    const node = (
-      <div
-        className={`${styles.status} ${styles.error} ${fullscreen ? styles.fullscreen : ''}`}
-      >
+    return (
+      <div className={`${styles.status} ${styles.error}`}>
         <p>出错了：{errorMessage(error)}</p>
         {onRetry && (
           <button type="button" className={styles.retry} onClick={onRetry}>
@@ -51,7 +41,6 @@ export function StatusView({
         )}
       </div>
     );
-    return fullscreen ? createPortal(node, document.body) : node;
   }
   if (isEmpty) {
     return <div className={styles.status}>{emptyText}</div>;

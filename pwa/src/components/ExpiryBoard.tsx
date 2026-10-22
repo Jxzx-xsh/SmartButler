@@ -43,7 +43,6 @@ export function ExpiryBoard({ onEdit, onDelete }: ExpiryBoardProps) {
         isEmpty={!query.isLoading && !query.error && items.length === 0}
         emptyText={`${days} 天内没有临期物品`}
         onRetry={() => void query.refetch()}
-        fullscreen
       />
 
       <div className={styles.list}>
