@@ -1,13 +1,15 @@
 /**
- * 监控页：实时 MJPEG 画面 + 采集状态 + 启动/停止控制 + 快照 + 通话录音上传。
+ * 监控页：近实时画面 + 采集状态 + 启动/停止控制 + 快照 + 通话录音上传。
  *
  * 设计要点：
- * - 画面：原生 <img src={streamUrl}> 直连后端 multipart/x-mixed-replace 流，不引
- *   入任何流媒体库。加载失败或未启动时按 status.state / configured 显示中文空态。
+ * - 画面：按 2fps 轮询 /api/capture/snapshot 并绘制到 canvas，不依赖 MJPEG 流。
+ *   原因：iOS 的 Safari / Chrome 同属 WebKit，不支持 multipart/x-mixed-replace，
+ *   <img src=stream> 在 iPhone 上会停在首帧或一直空白——而 PWA 的主要使用场景
+ *   正是手机。普通 HTTP 轮询全平台可用，且网关本身就是 2fps 抽帧，清晰度不损失。
  * - 状态：useCaptureStatus() 每 2s 轮询，面板展示状态中文映射、fps、最近成帧的
  *   相对时间。
  * - 控制：URL 输入 + 可选 fps 输入 + 启动/停止按钮；mutation pending 时禁用避免重复提交。
- * - 快照：按钮点击刷新一张带时间戳的 <img>（防缓存），独立于实时流。
+ * - 快照：按钮点击刷新一张带时间戳的 <img>（防缓存），独立于实时画面。
  * - 通话：原生 MediaRecorder 录音，停止后把 Blob 交给 useTalk().mutate 上传。
  *   方案 A 边界——仅上行留存，手机端回放待后续设备支持，页面显式标注，不伪造实时通话。
  *   无 MediaRecorder / 无麦克风权限时按钮禁用并给出中文提示。
@@ -42,6 +44,99 @@ const RECORDER_SUPPORTED =
   typeof window.MediaRecorder !== 'undefined' &&
   typeof navigator !== 'undefined' &&
   navigator.mediaDevices !== undefined;
+
+/** 画面轮询间隔（毫秒）：2fps，与网关抽帧帧率对齐，兼顾流量与观感。 */
+const FRAME_POLL_INTERVAL_MS = 500;
+
+/** canvas 内部分辨率：保持 16:9，CSS 用 object-fit: contain 适配容器。 */
+const CANVAS_WIDTH = 1280;
+const CANVAS_HEIGHT = 720;
+
+/**
+ * 把后端快照轮询绘制到 canvas 的近实时画面组件。
+ *
+ * 用递归 setTimeout 而非 setInterval：串行请求，慢网下不会堆积。
+ * 页面不可见时跳过拉取，回到前台自动恢复，省电省流量。
+ */
+function LiveFrame({
+  failureLimit,
+  onErrorChange,
+}: {
+  /** 连续失败多少次后上报错误；connected 状态下阈值小，连接中放大以避免误报 */
+  failureLimit: number;
+  onErrorChange: (failed: boolean) => void;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let image: HTMLImageElement | null = null;
+    let failures = 0;
+    let disposed = false;
+
+    const schedule = (): void => {
+      if (disposed) return;
+      timer = setTimeout(tick, FRAME_POLL_INTERVAL_MS);
+    };
+
+    const tick = (): void => {
+      if (disposed) return;
+      // 页面在后台时不拉流，避免无谓的流量与解码开销
+      if (document.hidden) {
+        schedule();
+        return;
+      }
+      const img = new Image();
+      image = img;
+      img.onload = () => {
+        if (disposed) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (canvas && ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+        failures = 0;
+        onErrorChange(false);
+        schedule();
+      };
+      img.onerror = () => {
+        if (disposed) return;
+        failures += 1;
+        if (failures >= failureLimit) {
+          onErrorChange(true);
+        }
+        schedule();
+      };
+      // 带时间戳与 token 的快照地址；每帧独立 URL，避免浏览器缓存旧图
+      img.src = captureApi.snapshotUrl();
+    };
+
+    tick();
+
+    return () => {
+      disposed = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+      }
+      // 断开回调引用，避免卸载后仍触发 state 更新
+      if (image !== null) {
+        image.onload = null;
+        image.onerror = null;
+      }
+    };
+  }, [failureLimit, onErrorChange]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={styles.frame}
+      width={CANVAS_WIDTH}
+      height={CANVAS_HEIGHT}
+      role="img"
+      aria-label="实时监控画面"
+    />
+  );
+}
 
 /** 把毫秒时间戳格式化成「n 秒前 / n 分钟前」相对时间；null 则返回占位。 */
 function formatRelative(ts: number | null): string {
@@ -79,10 +174,8 @@ export function MonitorView() {
   const [url, setUrl] = useState('');
   const [fps, setFps] = useState('');
 
-  // 画面流加载失败标志；状态变化（重新启动）时复位
+  // 画面加载失败标志；采集停止或重启时复位
   const [streamError, setStreamError] = useState(false);
-  // 实时流地址仅在启动后固定一次，避免每次 render 重连；null 表示未加载流
-  const [streamSrc, setStreamSrc] = useState<string | null>(null);
 
   // 快照地址（点击快照按钮时刷新）
   const [snapshotSrc, setSnapshotSrc] = useState<string | null>(null);
@@ -100,11 +193,9 @@ export function MonitorView() {
       status.state === 'connected' ||
       status.state === 'reconnecting');
 
+  // 离开可出图状态（停止/未配置）时复位错误标志，便于下次启动重新出图
   useEffect(() => {
-    if (streaming) {
-      setStreamSrc((prev) => prev ?? captureApi.streamUrl());
-    } else {
-      setStreamSrc(null);
+    if (!streaming) {
       setStreamError(false);
     }
   }, [streaming]);
@@ -189,12 +280,11 @@ export function MonitorView() {
     <section className={styles.container}>
       {/* 画面区 */}
       <div className={styles.screen}>
-        {streamSrc && !streamError ? (
-          <img
-            className={styles.frame}
-            src={streamSrc}
-            alt="实时监控画面"
-            onError={() => setStreamError(true)}
+        {streaming && !streamError ? (
+          <LiveFrame
+            // connected 下连续 3 次（约 1.5s）拉不到帧才报错；连接中放宽到 30s，避免误判
+            failureLimit={status?.state === 'connected' ? 3 : 60}
+            onErrorChange={setStreamError}
           />
         ) : (
           <div className={styles.placeholder}>{placeholder ?? '采集未启动'}</div>

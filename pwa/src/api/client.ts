@@ -291,14 +291,10 @@ export const captureApi = {
     request<CaptureStatus>('/api/capture/start', { method: 'POST', body }),
   /** 停止采集，返回最新状态。 */
   stop: () => request<CaptureStatus>('/api/capture/stop', { method: 'POST' }),
-  /** MJPEG 实时流地址，直接喂给 <img src>；<img> 无法带头，故有 token 时拼 query。 */
-  streamUrl: () => {
-    const token = getToken();
-    return token
-      ? `${API_BASE}/api/capture/stream?token=${encodeURIComponent(token)}`
-      : `${API_BASE}/api/capture/stream`;
-  },
-  /** 最近一帧快照地址，带时间戳防缓存；有 token 时额外拼 token query。 */
+  /**
+   * 最近一帧快照地址，带时间戳防缓存；有 token 时额外拼 token query。
+   * 监控页按 2fps 轮询此地址绘制到 canvas（MJPEG 流在 iOS WebKit 上不可用）。
+   */
   snapshotUrl: () => {
     const token = getToken();
     const q = `t=${Date.now()}`;
