@@ -1,4 +1,4 @@
-# SmartButler 家庭智能管家
+# SmartButler
 
 ## 简介
 
@@ -20,8 +20,12 @@ Android 手机现成推流 App → Mac mini 采集网关 + 门控（移动侦测
 npm install && npm --prefix backend install && npm --prefix pwa install
 cp backend/.env.example backend/.env
 npm run db:init
-npm run dev
+npm run dev        # 前台运行（Ctrl-C 退出）
+# 或 npm run restart —— 后台常驻，带健康检查；npm run stop 停止
 ```
+
+> Node 版本经 volta 声明为 22.20.0（见 package.json 的 volta 字段）。用其他大版本会因
+> better-sqlite3 原生模块不匹配而启动失败（ERR_DLOPEN_FAILED）。
 
 ## 功能清单
 
@@ -44,8 +48,8 @@ npm run dev
 ├── backend/   后端：Fastify API、SQLite、AI 接入、采集网关、门控、HA 集成
 ├── pwa/       前端：React PWA（物品管理 + 到期看板 + 监控）
 ├── docs/      文档：技术方案、部署指南、采集端配置
-├── scripts/   脚本：start-dev.sh（一键起前后端）、smoke.sh（端到端冒烟）
-└── package.json  根级编排：dev / build / db:init / db:seed / smoke
+├── scripts/   脚本：start-dev.sh（前台起前后端）、restart.sh（后台重启+健康检查）、smoke.sh（端到端冒烟）
+└── package.json  根级编排：dev / restart / stop / build / db:init / db:seed / smoke
 ```
 
 ## 文档
