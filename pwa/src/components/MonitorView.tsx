@@ -107,7 +107,7 @@ function LiveFrame({
         }
         schedule();
       };
-      // 带时间戳与 token 的快照地址；每帧独立 URL，避免浏览器缓存旧图
+      // 带时间戳的快照地址；每帧独立 URL，避免浏览器缓存旧图
       img.src = captureApi.snapshotUrl();
     };
 

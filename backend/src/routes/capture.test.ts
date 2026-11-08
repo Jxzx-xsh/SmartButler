@@ -25,6 +25,8 @@ function makeStatus(overrides: Partial<CaptureStatus> = {}): CaptureStatus {
   return {
     state: 'connected',
     sourceUrl: 'http://192.168.1.10:8080/video',
+    sourceUrlIndex: 0,
+    totalSourceUrls: 1,
     fps: 2,
     lastFrameAt: null,
     frameCount: 0,

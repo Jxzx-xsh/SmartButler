@@ -48,8 +48,12 @@ export type CaptureState = 'idle' | 'connecting' | 'connected' | 'reconnecting' 
 export interface CaptureStatus {
   /** 当前状态 */
   state: CaptureState;
-  /** 采集源地址 */
+  /** 当前正在尝试的采集源地址 */
   sourceUrl: string;
+  /** 当前 sourceUrl 在地址列表中的下标（0 表示第一个/主地址） */
+  sourceUrlIndex: number;
+  /** 配置的采集源地址总数 */
+  totalSourceUrls: number;
   /** 视频抽帧帧率 */
   fps: number;
   /** 最近一帧的时间戳（ms，Date.now()），尚无帧时为 null */
@@ -76,8 +80,10 @@ export interface CaptureGateway {
 
 /** createCaptureGateway 入参。 */
 export interface CaptureGatewayOptions {
-  /** 采集源地址（ffmpeg -i 输入），只作数组参数传入，绝不拼 shell */
-  sourceUrl: string;
+  /** 采集源地址数组（多个地址互为备份，如 IPv4 + IPv6）；网关按顺序尝试。 */
+  sourceUrls?: string[];
+  /** 采集源地址（单地址便捷写法，sourceUrls 未传时生效） */
+  sourceUrl?: string;
   /** ffmpeg 可执行文件路径或命令名，缺省 'ffmpeg' */
   ffmpegPath?: string;
   /** 视频抽帧帧率，缺省 2 */
@@ -109,7 +115,18 @@ type ChildProc = ReturnType<typeof spawn>;
  * @param options 采集参数与回调；spawnFn 供测试注入。
  */
 export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGateway {
-  const sourceUrl = options.sourceUrl;
+  // 地址数组：sourceUrls 优先，否则回退单 sourceUrl
+  const urls: string[] = options.sourceUrls && options.sourceUrls.length > 0
+    ? options.sourceUrls
+    : options.sourceUrl
+      ? [options.sourceUrl]
+      : [];
+  // 至少一个地址，不然 spawnVideo 会传 undefined 给 ffmpeg
+  if (urls.length === 0) {
+    throw new Error('createCaptureGateway：sourceUrls 和 sourceUrl 都未提供');
+  }
+  /** 当前正在尝试的地址下标；连续失败达到阈值时 +1 切下一个。 */
+  let urlIndex = 0;
   const ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
   const fps = options.fps ?? 2;
   const reconnectDelayMs = options.reconnectDelayMs ?? 2000;
@@ -129,6 +146,10 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   let frameCount = 0;
   let audioBytes = 0;
   let reconnectAttempts = 0;
+  /** 当前地址连续重连失败次数（达到阈值且还有下一个地址时切换） */
+  let consecutiveFailuresAtCurrentUrl = 0;
+  /** 同一地址连续失败多少次后切下一个地址 */
+  const URL_FAILOVER_THRESHOLD = 5;
 
   // 子进程句柄与标志
   let videoProc: ChildProc | null = null;
@@ -137,6 +158,8 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   let running = false; // start() 后置位，用于 start 幂等
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  /** 音频进程是否产出过数据：若未产出就退出，说明源无音频通道，静默放弃不触发重连。 */
+  let audioProducedData = false;
 
   /**
    * 内部「最近活动时刻」：每次连接建立或切出一帧时刷新，供看门狗判定僵死。
@@ -183,6 +206,8 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
       lastFrameAt = Date.now();
       // 看门狗活性信号：有帧产出说明拉流链路仍活着
       lastActivityAt = lastFrameAt;
+      // 成功收到帧，说明当前地址可用，重置失败计数
+      consecutiveFailuresAtCurrentUrl = 0;
       frameCount += 1;
       onFrame(frameCopy, lastFrameAt);
 
@@ -203,13 +228,14 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
 
   /** 启动视频抽帧子进程（image2pipe + mjpeg）。 */
   function spawnVideo(): void {
-    // 参数数组：sourceUrl 仅作 -i 的值，绝不拼接 shell 字符串（防注入）
+    const currentUrl = urls[urlIndex]!;
+    // 参数数组：currentUrl 仅作 -i 的值，绝不拼接 shell 字符串（防注入）
     const args = [
       '-hide_banner',
       '-loglevel',
       'error',
       '-i',
-      sourceUrl,
+      currentUrl,
       '-r',
       String(fps),
       '-f',
@@ -234,12 +260,13 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
 
   /** 启动音频解码子进程（16kHz 单声道 s16le PCM）。 */
   function spawnAudio(): void {
+    const currentUrl = urls[urlIndex]!;
     const args = [
       '-hide_banner',
       '-loglevel',
       'error',
       '-i',
-      sourceUrl,
+      currentUrl,
       '-vn',
       '-ar',
       String(AUDIO_SAMPLE_RATE),
@@ -254,17 +281,19 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
 
     child.stdout?.on('data', (chunk: Buffer) => {
       audioBytes += chunk.length;
+      audioProducedData = true;
       onAudio(chunk, Date.now());
     });
     child.stderr?.resume();
 
-    child.on('error', (err: Error) => handleProcFailure(err));
-    child.on('close', () => handleProcClose());
+    child.on('error', (err: Error) => handleAudioFailure(err));
+    child.on('close', (code) => handleAudioClose(code));
   }
 
   /** 同时拉起两路子进程，并把状态置为 connected。 */
   function spawnBoth(): void {
     frameBuffer = Buffer.alloc(0);
+    audioProducedData = false;
     // 连接建立即视为一次活动起点：设备正常时应很快出首帧，迟迟无帧由看门狗接管
     lastActivityAt = Date.now();
     spawnVideo();
@@ -315,7 +344,7 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   }
 
   /**
-   * 子进程 error（含 spawn ENOENT）处理：手动停止期间忽略；否则上报错误并触发重连。
+   * 视频子进程 error 处理：手动停止期间忽略；否则上报错误并触发重连。
    */
   function handleProcFailure(err: Error): void {
     if (manualStop) {
@@ -326,7 +355,7 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   }
 
   /**
-   * 子进程 close 处理：手动停止期间忽略；否则视为异常断线并触发重连。
+   * 视频子进程 close 处理：手动停止期间忽略；否则视为异常断线并触发重连。
    */
   function handleProcClose(): void {
     if (manualStop) {
@@ -336,9 +365,48 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   }
 
   /**
+   * 音频子进程 close 处理：区分「源无音频通道」和「原本有音频后来断了」两种情况。
+   * - 从未产出数据就退出 → 源本身无音频通道（如 IP Webcam MJPEG），静默放弃音频，
+   *   不清 audioProc 引用也不触发重连，让视频继续跑；
+   * - 之前产出过数据 → 音频流异常中断，同样触发重连（视为源整体断了）。
+   */
+  function handleAudioClose(code: number | null): void {
+    if (manualStop) {
+      return;
+    }
+    if (!audioProducedData) {
+      // 源没有音频通道，静默放弃这个子进程
+      audioProc = null;
+      return;
+    }
+    // 之前有音频数据现在断了，按视频断线同等处理
+    void code;
+    scheduleReconnect();
+  }
+
+  /**
+   * 音频子进程 error 处理：manualStop 忽略；否则若从未产出过数据也视为源无音频，
+   * 静默放弃；有数据过才触发重连。
+   */
+  function handleAudioFailure(err: Error): void {
+    if (manualStop) {
+      return;
+    }
+    if (!audioProducedData) {
+      audioProc = null;
+      return;
+    }
+    onError(err);
+    scheduleReconnect();
+  }
+
+  /**
    * 安排一次重连：先确保两路旧进程被清理，达到上限则停止自动重连并保持状态可观测，
    * 否则在 reconnectDelayMs 后重新拉起两路进程。用 reconnectTimer 去重，避免两路
    * 子进程同时失败触发多次重连竞态。
+   *
+   * 地址切换：同一地址连续失败 URL_FAILOVER_THRESHOLD 次且还有下一个地址时，
+   * 自动 urlIndex + 1 切过去；已经是最后一个地址则回到 0 从头循环尝试。
    */
   function scheduleReconnect(): void {
     // 已安排过重连则不重复安排（两路可能几乎同时触发 close/error）
@@ -350,6 +418,18 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
     if (maxReconnects >= 0 && reconnectAttempts >= maxReconnects) {
       state = 'reconnecting';
       return;
+    }
+    // 累计当前地址失败次数，达到阈值则切下一个地址（IPv4 ↔ IPv6 互为备份）
+    consecutiveFailuresAtCurrentUrl += 1;
+    if (
+      consecutiveFailuresAtCurrentUrl >= URL_FAILOVER_THRESHOLD &&
+      urls.length > 1
+    ) {
+      urlIndex = (urlIndex + 1) % urls.length;
+      consecutiveFailuresAtCurrentUrl = 0;
+      console.log(
+        `[capture] 地址 ${urls[urlIndex === 0 ? urls.length - 1 : urlIndex - 1]} 连续失败 ${URL_FAILOVER_THRESHOLD} 次，切换到 ${urls[urlIndex]}`,
+      );
     }
     state = 'reconnecting';
     // 清理可能仍存活的另一路进程，避免僵尸进程
@@ -390,6 +470,8 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
     running = true;
     manualStop = false;
     reconnectAttempts = 0;
+    urlIndex = 0; // 手动启动优先第一个（主）地址
+    consecutiveFailuresAtCurrentUrl = 0;
     state = 'connecting';
     spawnBoth();
   }
@@ -500,7 +582,9 @@ export function createCaptureGateway(options: CaptureGatewayOptions): CaptureGat
   function getStatus(): CaptureStatus {
     return {
       state,
-      sourceUrl,
+      sourceUrl: urls[urlIndex]!,
+      sourceUrlIndex: urlIndex,
+      totalSourceUrls: urls.length,
       fps,
       lastFrameAt,
       frameCount,

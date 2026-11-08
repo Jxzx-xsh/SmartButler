@@ -9,10 +9,14 @@
 /** 采集网关配置。 */
 export interface CaptureConfig {
   /**
-   * 采集源地址（ffmpeg -i 的输入），形如 http://<IP>:8080/video（MJPEG）
-   * 或 rtsp://<IP>:554/stream。缺省 '' 表示不自动启动采集（由上层决定何时 start）。
+   * 采集源地址（主，取 sourceUrls 的第一个）。向后兼容，供 status / 日志 / setSource 复用。
    */
   sourceUrl: string;
+  /**
+   * 采集源地址列表：支持逗号分隔多个地址（如 IPv4 + IPv6）。
+   * 网关会在每个地址连续失败若干次后自动切换到下一个。单个地址时数组长度为 1。
+   */
+  sourceUrls: string[];
   /** 视频抽帧帧率；缺省 2，非法（NaN）或 ≤0 回退 2。 */
   fps: number;
   /** ffmpeg 可执行文件路径或命令名；缺省 'ffmpeg'（走 PATH）。 */
@@ -76,9 +80,17 @@ export function loadCaptureConfig(env: NodeJS.ProcessEnv = process.env): Capture
     DEFAULT_STALL_TIMEOUT_MS,
   );
 
+  // 采集源地址：支持逗号分隔多个（IPv4 + IPv6 互为备份）；缺省空串表示不自动启动
+  const rawSource = env.CAPTURE_SOURCE_URL ?? '';
+  const sourceUrls = rawSource
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  const sourceUrl = sourceUrls[0] ?? '';
+
   return {
-    // 采集源地址：缺省空串表示不自动启动；可用 CAPTURE_SOURCE_URL 覆盖为实际拉流地址
-    sourceUrl: env.CAPTURE_SOURCE_URL ?? '',
+    sourceUrl,
+    sourceUrls,
     fps,
     // ffmpeg 命令：缺省走 PATH 的 ffmpeg（brew 安装后在 /opt/homebrew/bin/ffmpeg）；
     // 可用 CAPTURE_FFMPEG_PATH 覆盖为绝对路径。
